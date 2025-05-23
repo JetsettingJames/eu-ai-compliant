@@ -1,0 +1,37 @@
+{
+  "name": "test_upsert_repository_documents_performance",
+  "timestamp": "2025-05-23T19:49:44.701899",
+  "execution_times": {
+    "values": [
+      0.0020539159886538982,
+      0.0019153750035911798,
+      0.0023487500147894025
+    ],
+    "avg": 0.0021060136690114937,
+    "median": 0.0020539159886538982,
+    "min": 0.0019153750035911798,
+    "max": 0.0023487500147894025,
+    "std_dev": 0.00022133481720404164
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        130213,
+        130213
+      ],
+      [
+        130117,
+        130117
+      ],
+      [
+        130405,
+        130405
+      ]
+    ],
+    "peak_bytes": 130405,
+    "avg_diff_bytes": 130245
+  },
+  "metadata": {
+    "description": "Benchmark for upsert_repository_documents function"
+  }
+}

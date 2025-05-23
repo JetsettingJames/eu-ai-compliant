@@ -1,0 +1,37 @@
+{
+  "name": "test_determine_risk_tier_performance",
+  "timestamp": "2025-05-23T19:51:25.665853",
+  "execution_times": {
+    "values": [
+      0.0005021670367568731,
+      0.0004356249701231718,
+      0.000416541937738657
+    ],
+    "avg": 0.000451444648206234,
+    "median": 0.0004356249701231718,
+    "min": 0.000416541937738657,
+    "max": 0.0005021670367568731,
+    "std_dev": 4.495120750834862e-05
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        2495,
+        2495
+      ],
+      [
+        2495,
+        2495
+      ],
+      [
+        2495,
+        2495
+      ]
+    ],
+    "peak_bytes": 2495,
+    "avg_diff_bytes": 2495
+  },
+  "metadata": {
+    "description": "Benchmark for determine_risk_tier function"
+  }
+}

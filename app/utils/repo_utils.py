@@ -11,8 +11,74 @@ import requests
 import logging
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlparse
+import httpx
 
 logger = logging.getLogger(__name__)
+
+GITHUB_API_BASE_URL = "https://api.github.com"
+
+async def fetch_github_repo_branch_info(owner: str, repo_name: str, branch_name: Optional[str] = None, token: Optional[str] = None) -> Tuple[str, str]:
+    """
+    Fetches the specified (or default) branch name and its latest commit SHA for a GitHub repository.
+
+    Args:
+        owner: The owner of the repository.
+        repo_name: The name of the repository.
+        branch_name: Optional specific branch name. If None, the default branch is used.
+        token: Optional GitHub personal access token for authentication.
+
+    Returns:
+        A tuple (actual_branch_name, commit_sha).
+
+    Raises:
+        ValueError: If the repository or branch is not found or other API errors occur.
+    """
+    headers = {
+        "Accept": "application/vnd.github.v3+json",
+        "X-GitHub-Api-Version": "2022-11-28"
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    async with httpx.AsyncClient(headers=headers, timeout=20.0) as client:
+        actual_branch_name = branch_name
+        if not actual_branch_name:
+            # Fetch repository details to get the default branch
+            repo_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repo_name}"
+            logger.info(f"Fetching repo details to find default branch: {repo_url}")
+            try:
+                response = await client.get(repo_url)
+                response.raise_for_status() # Raise an exception for 4XX or 5XX status codes
+                repo_data = response.json()
+                actual_branch_name = repo_data.get("default_branch")
+                if not actual_branch_name:
+                    raise ValueError(f"Could not determine default branch for {owner}/{repo_name}. Response: {repo_data}")
+                logger.info(f"Default branch for {owner}/{repo_name} is {actual_branch_name}")
+            except httpx.HTTPStatusError as e:
+                logger.error(f"GitHub API error fetching repo details for {owner}/{repo_name}: {e.response.status_code} - {e.response.text}")
+                raise ValueError(f"Could not fetch repository details for {owner}/{repo_name}. Status: {e.response.status_code}. Error: {e.response.text}") from e
+            except Exception as e:
+                logger.error(f"Unexpected error fetching repo details for {owner}/{repo_name}: {e}")
+                raise ValueError(f"Unexpected error fetching repository details for {owner}/{repo_name}: {e}") from e
+
+        # Fetch branch details to get the commit SHA
+        branch_url = f"{GITHUB_API_BASE_URL}/repos/{owner}/{repo_name}/branches/{actual_branch_name}"
+        logger.info(f"Fetching branch details for {actual_branch_name}: {branch_url}")
+        try:
+            response = await client.get(branch_url)
+            response.raise_for_status()
+            branch_data = response.json()
+            commit_sha = branch_data.get("commit", {}).get("sha")
+            if not commit_sha:
+                raise ValueError(f"Could not get commit SHA for branch {actual_branch_name} of {owner}/{repo_name}. Response: {branch_data}")
+            logger.info(f"Latest commit SHA for {owner}/{repo_name} on branch {actual_branch_name} is {commit_sha}")
+            return actual_branch_name, commit_sha
+        except httpx.HTTPStatusError as e:
+            logger.error(f"GitHub API error fetching branch details for {owner}/{repo_name}/{actual_branch_name}: {e.response.status_code} - {e.response.text}")
+            raise ValueError(f"Could not fetch branch details for {owner}/{repo_name}/{actual_branch_name}. Status: {e.response.status_code}. Error: {e.response.text}") from e
+        except Exception as e:
+            logger.error(f"Unexpected error fetching branch details for {owner}/{repo_name}/{actual_branch_name}: {e}")
+            raise ValueError(f"Unexpected error fetching branch details for {owner}/{repo_name}/{actual_branch_name}: {e}") from e
 
 def get_repo_archive_info(repo_url: str) -> Dict[str, Any]:
     """
@@ -52,70 +118,127 @@ def get_repo_archive_info(repo_url: str) -> Dict[str, Any]:
         "full_name": f"{owner}/{repo_name}"
     }
 
-def download_repo_zip(archive_url: str) -> Optional[str]:
+async def download_repo_zip(archive_url: str, token: Optional[str] = None) -> Optional[str]:
     """
-    Download a repository ZIP archive from GitHub.
+    Download a repository ZIP archive from GitHub asynchronously.
     
     Args:
         archive_url: URL to the repository ZIP archive
+        token: Optional GitHub personal access token for authentication.
         
     Returns:
-        Path to the downloaded ZIP file
+        Path to the downloaded ZIP file, or None if an error occurs.
     """
     logger.info(f"Downloading repository archive from: {archive_url}")
     
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        logger.info("Using GitHub token for download.")
+    else:
+        logger.info("No GitHub token provided for download.")
+
+    temp_file = None # Initialize to ensure it's defined in finally block
     try:
-        # Create a temporary file to store the ZIP
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=60.0) as client:
+            async with client.stream("GET", archive_url) as response:
+                response.raise_for_status()
+                async for chunk in response.aiter_bytes():
+                    temp_file.write(chunk)
+        
         temp_file.close()
-        
-        # Download the ZIP file
-        response = requests.get(archive_url, stream=True)
-        response.raise_for_status()
-        
-        with open(temp_file.name, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-        
         logger.info(f"Repository archive downloaded to: {temp_file.name}")
         return temp_file.name
-    except Exception as e:
-        logger.error(f"Error downloading repository archive: {str(e)}")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error downloading repository archive {archive_url}: {e.response.status_code} - {e.response.text}")
+        if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
+            if not temp_file.closed:
+                temp_file.close()
+            os.remove(temp_file.name) # Clean up empty/partial file
         return None
+    except Exception as e:
+        logger.error(f"Error downloading repository archive {archive_url}: {str(e)}")
+        if temp_file and hasattr(temp_file, 'name') and os.path.exists(temp_file.name):
+             if not temp_file.closed:
+                temp_file.close()
+             os.remove(temp_file.name) # Clean up
+        return None
+    finally:
+        # Ensure the file is closed if it was opened, especially if an error occurred before explicit close
+        if temp_file and hasattr(temp_file, 'name') and not temp_file.closed:
+            try:
+                temp_file.close()
+                logger.info(f"Ensured temporary file {temp_file.name} is closed in finally block.")
+            except Exception as e_close:
+                logger.error(f"Error closing temp_file {temp_file.name} in finally block: {e_close}")
 
-def unzip_archive(zip_path: str) -> Optional[str]:
+
+def unzip_archive(zip_path: str, extract_to_dir: str) -> Optional[str]:
     """
-    Extract a ZIP archive to a temporary directory.
+    Extract a ZIP archive to a specified directory.
     
     Args:
         zip_path: Path to the ZIP archive
+        extract_to_dir: Directory to extract the archive contents into.
         
     Returns:
-        Path to the extracted directory
+        Path to the directory containing the extracted repository files, 
+        typically a single sub-directory within extract_to_dir.
+        Returns None if an error occurs.
     """
-    logger.info(f"Extracting ZIP archive: {zip_path}")
+    logger.info(f"Extracting ZIP archive: {zip_path} to {extract_to_dir}")
     
     try:
-        # Create a temporary directory to extract the ZIP
-        temp_dir = tempfile.mkdtemp()
+        # Ensure the extraction directory exists
+        os.makedirs(extract_to_dir, exist_ok=True)
         
-        # Extract the ZIP file
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
+            # Check for zip bomb (very basic check: too many files or too large individual files)
+            # A more robust check would inspect total uncompressed size if possible before extraction.
+            num_files = len(zip_ref.infolist())
+            if num_files > 20000: # Arbitrary limit for number of files
+                logger.error(f"Zip bomb detected? Archive contains too many files: {num_files}")
+                return None
+            
+            # Check total size (approximate, as this is compressed size sum)
+            total_size_compressed = sum(file.file_size for file in zip_ref.infolist())
+            if total_size_compressed > 500 * 1024 * 1024: # 500 MB compressed limit
+                 logger.error(f"Zip bomb detected? Archive total compressed size too large: {total_size_compressed / (1024*1024):.2f} MB")
+                 return None
+
+            zip_ref.extractall(extract_to_dir)
         
-        # Get the root directory of the extracted content
-        extracted_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d))]
-        if not extracted_dirs:
-            logger.error("No directories found in the extracted ZIP archive")
+        # GitHub archives usually extract to a single directory named like 'reponame-commitsha'
+        # We need to find this directory within extract_to_dir.
+        extracted_items = os.listdir(extract_to_dir)
+        if not extracted_items:
+            logger.error(f"No items found in the extraction directory: {extract_to_dir} after unzipping {zip_path}")
             return None
+
+        # Assume the first directory found is the root of the unzipped repo
+        # This might need to be more robust if there could be multiple or no directories.
+        potential_repo_root = None
+        for item in extracted_items:
+            item_path = os.path.join(extract_to_dir, item)
+            if os.path.isdir(item_path):
+                potential_repo_root = item_path
+                break
         
-        # The repository is usually extracted to a single directory
-        repo_dir = os.path.join(temp_dir, extracted_dirs[0])
-        logger.info(f"Repository extracted to: {repo_dir}")
-        return repo_dir
-    except Exception as e:
-        logger.error(f"Error extracting ZIP archive: {str(e)}")
+        if not potential_repo_root:
+            logger.error(f"No sub-directory found in {extract_to_dir} after unzipping. Extracted items: {extracted_items}")
+            return None
+
+        logger.info(f"Repository extracted to: {potential_repo_root}")
+        return potential_repo_root
+    except zipfile.BadZipFile:
+        logger.error(f"Bad ZIP file: {zip_path}")
         return None
+    except Exception as e:
+        logger.error(f"Error extracting ZIP archive {zip_path} to {extract_to_dir}: {str(e)}")
+        return None
+
 
 def find_documentation_files(repo_dir: str) -> Tuple[List[str], List[str]]:
     """

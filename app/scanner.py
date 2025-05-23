@@ -5,19 +5,19 @@ import os
 from typing import Tuple, Optional, Dict, Any, List
 from datetime import datetime, timezone
 
-from app.models import RepoInputModel, ScanResultModel, ChecklistItem, RepoInfo, CodeSignal, GrepSignalItem, FuzzyMatchResult, RepositoryFile, CodeAnalysisResult
+from app.models import RepoInputModel, ScanResultModel, ChecklistItem, RepoInfo, CodeSignal, GrepSignalItem, FuzzyMatchResult, RepositoryFile, CodeAnalysisResult, ComplianceAnalysisDetails, TierAnalysis, ComplianceMatch, RiskTier
 from app.logger import get_logger
 from app.config import settings 
 from app.services.llm_service import LLMService
 from app.utils.repo_utils import (
-    get_repo_archive_info,
     download_repo_zip, 
     unzip_archive,
     find_documentation_files,
     extract_text_and_headings_from_markdown,
     parse_openapi_file,
     find_code_files,
-    run_grep_search
+    run_grep_search,
+    fetch_github_repo_branch_info
 )
 from app.utils.compliance import (
     load_and_get_checklist_for_tier,
@@ -34,22 +34,35 @@ from .vector_processing import (
     find_matching_obligations_for_repo_doc,
     text_splitter
 )
+from app.websocket_manager import ConnectionManager
+from starlette.concurrency import run_in_threadpool # Added import
 
 logger = get_logger(__name__)
+
+# Placeholder for grep patterns - these would typically be more extensive and configurable
+GREP_PATTERNS = [
+    "api_key", "secret_key", "password", "token", # Security related
+    "biometric", "face_recognition", "voice_recognition", # AI ethics related
+    "profiling", "automated_decision_making",
+    "TODO:", "FIXME:", "HACK:" # Code quality/maintenance
+]
+
+async def _send_ws_progress(ws_manager: Optional[ConnectionManager], scan_id: Optional[str], status: str, detail: Optional[str] = None, data: Optional[Dict[str, Any]] = None):
+    if ws_manager and scan_id:
+        message_payload = {"status": status}
+        if detail:
+            message_payload["detail"] = detail
+        if data:
+            message_payload["data"] = data 
+        await ws_manager.send_progress(scan_id, message_payload)
+        logger.debug(f"Sent WS progress for {scan_id}: {status} - {detail or ''}")
 
 def analyze_python_code_ast(file_path: str, file_content: str) -> Optional[CodeAnalysisResult]:
     """Placeholder for Python code AST analysis."""
     logger.debug(f"Placeholder AST analysis for Python file: {file_path}")
     # In a real implementation, this would parse the code and return findings.
-    # For testing purposes, we might return a default or None.
-    return None
-
-def analyze_js_ts_code_ast(file_path: str, file_content: str, lang: str) -> Optional[CodeAnalysisResult]:
-    """Placeholder for JavaScript/TypeScript code AST analysis."""
-    logger.debug(f"Placeholder AST analysis for {lang} file: {file_path}")
-    # In a real implementation, this would parse the code and return findings.
-    return None
-
+    # For testing purposes, we return a default CodeAnalysisResult.
+    return CodeAnalysisResult(file_path=file_path, imported_modules=[])
 
 def load_full_obligations_data() -> Dict[str, Any]:
     """
@@ -64,7 +77,7 @@ def load_full_obligations_data() -> Dict[str, Any]:
     logger.info("Loading obligations data from YAML configuration...")
     try:
         # Get the obligations data using the yaml_config utility
-        obligations_data = get_obligations()
+        obligations_data = get_obligations() # from app.utils.yaml_config
         
         if not obligations_data:
             logger.warning("No obligations data found in the YAML configuration.")
@@ -189,7 +202,7 @@ async def determine_risk_tier(
     
     # Add specific code_signals checks for prohibited
     if code_signals:
-        if code_signals.real_time_biometric and grep_signals:
+        if code_signals.biometric and code_signals.live_stream and grep_signals:
             # Check for public spaces in grep signals
             for signal in grep_signals:
                 if any(term in signal.line_content.lower() for term in ["public", "space", "surveillance"]):
@@ -252,19 +265,27 @@ async def determine_risk_tier(
             analysis_details["code_signals"].append(match_info)
             logger.info("Biometric identification capabilities detected via code analysis, indicating HIGH risk.")
         
-        if code_signals.critical_infrastructure:
-            match_info = {
-                "source_type": "code_analysis",
-                "signal_type": "critical_infrastructure",
-                "obligation_id": "HIGH_CRITICAL",
-                "obligation_title": "Critical Infrastructure Management",
-                "confidence": 0.9
-            }
-            analysis_details["high"]["matches"].append(match_info)
-            analysis_details["high"]["score"] += 2
-            analysis_details["code_signals"].append(match_info)
-            logger.info("Critical infrastructure management capabilities detected via code analysis, indicating HIGH risk.")
-    
+        # if code_signals.critical_infrastructure: # Commenting out as 'critical_infrastructure' is not on CodeSignal model
+        #     analysis_details["high"]["matches"].append({
+        #         "keyword": "critical_infrastructure_signal", 
+        #         "source_type": "code_signal", 
+        #         "confidence": 0.9,
+        #         "reason": "Detected code signal related to critical infrastructure."
+        #     })
+        #     analysis_details["high"]["score"] += 5 
+        #     logger.info("Code signal: Potential critical infrastructure usage detected.")
+
+        # if code_signals.education_vocational_training: # Commenting out as 'education_vocational_training' is not on CodeSignal model
+        #     analysis_details["high"]["matches"].append({
+        #         "keyword": "education_signal", 
+        #         "source_type": "code_signal", 
+        #         "confidence": 0.9,
+        #         "reason": "Detected code signal related to education/vocational training."
+        #     })
+        #     analysis_details["high"]["score"] += 5
+        #     logger.info("Code signal: Potential education/vocational training usage detected.")
+        pass # Placeholder for valid CodeSignal checks for high risk
+
     # 3. Check for Limited Risk AI systems
     limited_tier_data = obligations_data.get("limited", {})
     limited_overall_keywords = limited_tier_data.get("overall_tier_keywords", [])
@@ -309,19 +330,27 @@ async def determine_risk_tier(
             analysis_details["code_signals"].append(match_info)
             logger.info("General Purpose AI / LLM usage detected via code analysis, indicating LIMITED risk.")
         
-        if code_signals.emotion_recognition:
-            match_info = {
-                "source_type": "code_analysis",
-                "signal_type": "emotion_recognition",
-                "obligation_id": "LIMITED_EMOTION",
-                "obligation_title": "Emotion Recognition System",
-                "confidence": 0.85
-            }
-            analysis_details["limited"]["matches"].append(match_info)
-            analysis_details["limited"]["score"] += 1.5
-            analysis_details["code_signals"].append(match_info)
-            logger.info("Emotion recognition capabilities detected via code analysis, indicating LIMITED risk.")
-    
+        # if code_signals.emotion_recognition: # Commenting out as 'emotion_recognition' is not on CodeSignal model
+        #     analysis_details["limited"]["matches"].append({
+        #         "keyword": "emotion_recognition_signal", 
+        #         "source_type": "code_signal", 
+        #         "confidence": 0.8,
+        #         "reason": "Detected code signal related to emotion recognition."
+        #     })
+        #     analysis_details["limited"]["score"] += 3
+        #     logger.info("Code signal: Potential emotion recognition usage detected.")
+
+        # if code_signals.deep_fake_generation: # Commenting out as 'deep_fake_generation' is not on CodeSignal model
+        #     analysis_details["limited"]["matches"].append({
+        #         "keyword": "deep_fake_signal", 
+        #         "source_type": "code_signal", 
+        #         "confidence": 0.8,
+        #         "reason": "Detected code signal related to deep fake generation."
+        #     })
+        #     analysis_details["limited"]["score"] += 3
+        #     logger.info("Code signal: Potential deep fake generation usage detected.")
+        pass # Placeholder for valid CodeSignal checks for limited risk
+
     # 4. Check for Minimal Risk AI systems (default)
     # If no specific signals are found, it's minimal risk
     if not any([analysis_details["prohibited"]["matches"], 
@@ -353,19 +382,21 @@ async def determine_risk_tier(
         return "minimal", analysis_details
 
 
-async def scan_repo(input_data: RepoInputModel) -> ScanResultModel:
+async def scan_repo(input_data: RepoInputModel, scan_id: Optional[str] = None, ws_manager: Optional[ConnectionManager] = None) -> ScanResultModel:
     """Orchestrates the 7-step repository scanning process."""
+    await _send_ws_progress(ws_manager, scan_id, "starting", "Scan process initiated.")
+    
     logger.info(f"Starting scan for input: {input_data.model_dump_json(exclude_none=True)}")
     temp_dir = None
     llm_service = LLMService()
-    all_fuzzy_matches: List[FuzzyMatchResult] = []
+    all_fuzzy_matches: List[FuzzyMatchResult] = [] # Initialize here for broader scope
     repo_files_for_embedding: List[RepositoryFile] = []
-    file_contents_cache: Dict[str, Optional[str]] = {} # ADDED: Cache for file contents
+    file_contents_cache: Dict[str, Optional[str]] = {} 
 
     try:
         # --- Initial Setup: Load and Upsert Obligations (once or if needed) ---
         logger.info("Loading full obligations data...")
-        full_obligations_data = load_full_obligations_data() # Removed await
+        full_obligations_data = load_full_obligations_data() 
 
         if full_obligations_data:
             logger.info("Upserting obligation documents to ChromaDB...")
@@ -375,316 +406,364 @@ async def scan_repo(input_data: RepoInputModel) -> ScanResultModel:
             logger.error("Failed to load obligations data. Vector-assisted features will be impacted.")
             # Decide if scan should continue or raise an error
 
-        # Step 0: Resolve input and get repo archive info
-        logger.info("Step 0: Resolving repository input and getting archive info...")
+        # Step 0: Resolve input and get repository archive info
+        await _send_ws_progress(ws_manager, scan_id, "progress", "Step 0: Resolving repository input and getting archive info...")
         repo_info = await resolve_repo_input(input_data)
+        target_branch, actual_commit_sha = await fetch_github_repo_branch_info(
+            owner=repo_info.owner,
+            repo_name=repo_info.repo,
+            branch_name=repo_info.branch, # This can be None, handled by fetch_github_repo_branch_info
+            token=settings.GITHUB_TOKEN
+        )
+        logger.info(f"Target branch: {target_branch}, Commit SHA: {actual_commit_sha}")
+        archive_url = f"https://github.com/{repo_info.owner}/{repo_info.repo}/archive/{actual_commit_sha}.zip"
+        
         temp_dir = tempfile.mkdtemp(prefix="repo_scan_")
-        logger.info(f"Created temporary directory: {temp_dir}")
-
-        repo_url_str = str(input_data.repo_url) if input_data.repo_url else f"https://github.com/{repo_info.owner}/{repo_info.repo}"
-        actual_commit_sha = "unknown_commit_sha"
-
-        try: # Inner try for core scanning steps (1-7)
-            # Step 1: Fetch & Unzip
-            logger.info("Step 1: Fetching and unzipping repository...")
-            target_branch, actual_commit_sha = await get_repo_archive_info(repo_info, settings.GITHUB_TOKEN)
-            logger.info(f"Resolved target branch: {target_branch}, commit SHA: {actual_commit_sha}")
-            zip_path = await download_repo_zip(repo_info, actual_commit_sha, settings.GITHUB_TOKEN, temp_dir)
-            logger.info(f"Repository ZIP downloaded to: {zip_path}")
-            unzipped_path = await unzip_archive(zip_path, temp_dir, max_size_mb=250)
-            logger.info(f"Repository unzipped to: {unzipped_path}")
-
-            # --- Collect all unique file paths that need reading ---
-            all_paths_to_read_abs = set()
-
-            documentation_files = find_documentation_files(temp_dir)
-            doc_files_abs = [
-                os.path.join(temp_dir, rel_path) 
-                for paths in documentation_files.values() for rel_path in paths
-            ]
-            all_paths_to_read_abs.update(doc_files_abs)
-
-            openapi_specs_abs = [os.path.join(temp_dir, rel_path) for rel_path in documentation_files.get('openapi', [])]
-            # openapi_specs_abs are already in doc_files_abs, so no need to add again
-
-            code_files_by_lang = find_code_files(temp_dir)
-            python_files_for_ast_abs = [os.path.join(temp_dir, rel_path) for rel_path in code_files_by_lang.get('python', [])]
-            all_paths_to_read_abs.update(python_files_for_ast_abs)
-
-            all_code_files_abs = [
-                os.path.join(temp_dir, rel_path) 
-                for lang_paths in code_files_by_lang.values() for rel_path in lang_paths
-            ]
-            all_paths_to_read_abs.update(all_code_files_abs)
-
-            # --- Read all unique files ONCE and cache their content ---
-            logger.info(f"Caching content for {len(all_paths_to_read_abs)} unique files...")
-            for file_path_abs in all_paths_to_read_abs:
-                try:
-                    # Use 'errors=ignore' as a general policy for caching, 
-                    # specific parsing can be more strict if needed.
-                    with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
-                        # logger.debug(f"CACHE_READ: Successfully opened {file_path_abs} to cache content.") # Optional: too verbose
-                        file_contents_cache[file_path_abs] = f.read()
-                except FileNotFoundError:
-                    logger.warning(f"File not found during caching: {file_path_abs}")
-                    file_contents_cache[file_path_abs] = None
-                except Exception as e:
-                    logger.error(f"Error reading file {file_path_abs} during caching: {e}")
-                    file_contents_cache[file_path_abs] = None
-            logger.info("File content caching complete.")
-
-            # Step 2: Extract Documentation (Markdown, OpenAPI)
-            logger.info("Step 2: Extracting documentation (Markdown, OpenAPI)...")
-            all_markdown_text_list: List[str] = []
-            all_headings: List[str] = []
-            openapi_specs_summary: List[Dict[str, Any]] = []
-
-            markdown_file_paths_abs = [os.path.join(temp_dir, rel_path) for rel_path in documentation_files.get('markdown', [])]
-            for md_file_path in markdown_file_paths_abs:
-                logger.info(f"Processing Markdown file (from cache): {md_file_path}")
-                # extract_text_and_headings_from_markdown expects a path, and it's mocked in tests
-                # The real function opens the file, but in tests, the mock is called.
-                # If we had a version that takes content, we'd use file_contents_cache[md_file_path]
-                try:
-                    text, headings = extract_text_and_headings_from_markdown(md_file_path)
-                    if text: all_markdown_text_list.append(text)
-                    if headings: all_headings.extend(headings)
-                except Exception as e:
-                    logger.error(f"Error processing Markdown file {md_file_path} (using path): {e}")
+        
+        # Step 1: Fetch & Unzip
+        logger.info("Step 1: Fetching and unzipping repository...")
+        # Pass only archive_url and token to the updated async download_repo_zip
+        zip_path = await download_repo_zip(archive_url, token=settings.GITHUB_TOKEN)
+        if not zip_path:
+            logger.error(f"Failed to download repository from {archive_url}")
+            await _send_ws_progress(ws_manager, scan_id, "error", f"Failed to download repository from {archive_url}")
+            # Consider how to handle this error - perhaps raise an exception or return an error model
+            raise ValueError(f"Failed to download repository from {archive_url}")
             
-            combined_markdown_text = "\n\n---\n\n".join(all_markdown_text_list)
-
-            for spec_file_path in openapi_specs_abs:
-                logger.info(f"Processing potential OpenAPI/Swagger file (from cache): {spec_file_path}")
-                # parse_openapi_file expects a path, and it's mocked in tests.
+        logger.info(f"Repository ZIP downloaded to: {zip_path}")
+        # Use run_in_threadpool for the synchronous unzip_archive function
+        unzipped_path = await run_in_threadpool(
+            unzip_archive, 
+            zip_path=zip_path, 
+            extract_to_dir=temp_dir
+        )
+        if not unzipped_path:
+            logger.error(f"Failed to unzip repository archive {zip_path}")
+            await _send_ws_progress(ws_manager, scan_id, "error", f"Failed to unzip repository archive {zip_path}")
+            # Clean up the downloaded zip file if unzipping fails
+            if os.path.exists(zip_path):
                 try:
-                    spec_info = parse_openapi_file(spec_file_path)
-                    if spec_info: openapi_specs_summary.append(spec_info)
-                except Exception as e:
-                    logger.error(f"Error processing OpenAPI file {spec_file_path} (using path): {e}")
+                    os.remove(zip_path)
+                    logger.info(f"Cleaned up failed download: {zip_path}")
+                except OSError as e_remove:
+                    logger.error(f"Error cleaning up failed download {zip_path}: {e_remove}")
+            raise ValueError(f"Failed to unzip repository archive {zip_path}")
 
-            # Step 3: Summarise with LLM
-            logger.info("Step 3: Summarising documentation with LLM...")
-            doc_summary_bullets: List[str] = []
-            if llm_service.is_openai_configured():
-                doc_summary_bullets = await llm_service.summarize_documentation(
-                    full_text=combined_markdown_text,
-                    headings=all_headings,
-                    openapi_summaries=openapi_specs_summary
-                )
-                logger.info(f"LLM summarization complete. Bullets: {len(doc_summary_bullets)}")
+        logger.info(f"Repository unzipped to: {unzipped_path}")
+
+        # --- Collect all unique file paths that need reading ---
+        all_paths_to_read_abs = set()
+
+        # Update paths to be relative to the actual unzipped_path root
+        # find_documentation_files returns a tuple: (markdown_files_rel, openapi_files_rel)
+        markdown_files_rel, openapi_files_rel = find_documentation_files(unzipped_path)
+        
+        doc_files_abs = [
+            os.path.join(unzipped_path, rel_path) 
+            for rel_path in markdown_files_rel + openapi_files_rel # Combine both lists
+        ]
+        all_paths_to_read_abs.update(doc_files_abs)
+
+        # openapi_specs_rel is now directly available
+        openapi_specs_abs = [os.path.join(unzipped_path, rel_path) for rel_path in openapi_files_rel]
+
+        code_files_by_lang_rel = find_code_files(unzipped_path)
+        python_files_for_ast_abs = [os.path.join(unzipped_path, rel_path) for rel_path in code_files_by_lang_rel.get('python', [])]
+        all_paths_to_read_abs.update(python_files_for_ast_abs)
+
+        all_code_files_abs = [
+            os.path.join(unzipped_path, rel_path) 
+            for lang_paths in code_files_by_lang_rel.values() for rel_path in lang_paths
+        ]
+        all_paths_to_read_abs.update(all_code_files_abs)
+
+        # --- Read all unique files ONCE and cache their content ---
+        logger.info(f"Caching content for {len(all_paths_to_read_abs)} unique files...")
+        for file_path_abs in all_paths_to_read_abs:
+            try:
+                # Use 'errors=ignore' as a general policy for caching, 
+                # specific parsing can be more strict if needed.
+                with open(file_path_abs, 'r', encoding='utf-8', errors='ignore') as f:
+                    # logger.debug(f"CACHE_READ: Successfully opened {file_path_abs} to cache content.") # Optional: too verbose
+                    file_contents_cache[file_path_abs] = f.read()
+            except FileNotFoundError:
+                logger.warning(f"File not found during caching: {file_path_abs}")
+                file_contents_cache[file_path_abs] = None
+            except Exception as e:
+                logger.error(f"Error reading file {file_path_abs} during caching: {e}")
+                file_contents_cache[file_path_abs] = None
+        logger.info("File content caching complete.")
+
+        # Step 2: Extract Documentation (Markdown, OpenAPI)
+        logger.info("Step 2: Extracting documentation (Markdown, OpenAPI)...")
+        all_markdown_text_list: List[str] = []
+        all_headings: List[str] = []
+        openapi_specs_summary: List[Dict[str, Any]] = []
+
+        markdown_file_paths_abs = [os.path.join(unzipped_path, rel_path) for rel_path in markdown_files_rel]
+        for md_file_path in markdown_file_paths_abs:
+            logger.info(f"Processing Markdown file (from cache): {md_file_path}")
+            # extract_text_and_headings_from_markdown expects a path, and it's mocked in tests
+            # The real function opens the file, but in tests, the mock is called.
+            # If we had a version that takes content, we'd use file_contents_cache[md_file_path]
+            try:
+                text, headings = extract_text_and_headings_from_markdown(md_file_path)
+                if text: all_markdown_text_list.append(text)
+                if headings: all_headings.extend(headings)
+            except Exception as e:
+                logger.error(f"Error processing Markdown file {md_file_path} (using path): {e}")
+        
+        combined_markdown_text = "\n\n---\n\n".join(all_markdown_text_list)
+
+        for spec_file_path in openapi_specs_abs:
+            logger.info(f"Processing potential OpenAPI/Swagger file (from cache): {spec_file_path}")
+            # parse_openapi_file expects a path, and it's mocked in tests.
+            try:
+                spec_info = parse_openapi_file(spec_file_path)
+                if spec_info: openapi_specs_summary.append(spec_info)
+            except Exception as e:
+                logger.error(f"Error processing OpenAPI file {spec_file_path} (using path): {e}")
+
+        # Step 3: Summarise with LLM
+        logger.info("Step 3: Summarising documentation with LLM...")
+        doc_summary_bullets: List[str] = []
+        if llm_service.is_openai_configured():
+            doc_summary_bullets = await llm_service.summarize_documentation(
+                full_text=combined_markdown_text,
+                headings=all_headings,
+                openapi_summaries=openapi_specs_summary
+            )
+            logger.info(f"LLM summarization complete. Bullets: {len(doc_summary_bullets)}")
+        else:
+            if not combined_markdown_text and not openapi_specs_summary:
+                doc_summary_bullets = ["Warning: No significant documentation found and LLM summarization skipped (API key missing)."]
             else:
-                if not combined_markdown_text and not openapi_specs_summary:
-                    doc_summary_bullets = ["Warning: No significant documentation found and LLM summarization skipped (API key missing)."]
-                else:
-                    doc_summary_bullets = [
-                        "Placeholder: LLM summarization skipped (API key missing).",
-                        f"Markdown text length: {len(combined_markdown_text)}, Headings found: {len(all_headings)}, OpenAPI specs: {len(openapi_specs_summary)}"
-                    ]
-                logger.info("Using placeholder documentation summary.")
+                doc_summary_bullets = [
+                    "Placeholder: LLM summarization skipped (API key missing).",
+                    f"Markdown text length: {len(combined_markdown_text)}, Headings found: {len(all_headings)}, OpenAPI specs: {len(openapi_specs_summary)}"
+                ]
+            logger.info("Using placeholder documentation summary.")
 
-            # Step 3a: AST Analysis (Python only for now)
-            logger.info("Step 3a: Performing AST analysis for Python files...")
-            final_code_signals = CodeSignal(uses_gpai=False) # Default
-            # python_files_for_ast_abs already defined
+        # Step 3a: AST Analysis (Python only for now)
+        logger.info("Step 3a: Performing AST analysis for Python files...")
+        final_code_signals = CodeSignal(uses_gpai=False) # Default
+        # python_files_for_ast_abs already defined
 
-            for file_path_abs in python_files_for_ast_abs:
-                logger.debug(f"Analyzing Python file (AST from cache): {file_path_abs}")
-                file_content = file_contents_cache.get(file_path_abs)
-                if file_content is None:
-                    logger.warning(f"Skipping AST analysis for {file_path_abs}, content not available.")
-                    continue
-                try:
-                    # analyze_python_code_ast expects path and content.
-                    analysis_result: Optional[CodeAnalysisResult] = analyze_python_code_ast(file_path_abs, file_content)
-                    if analysis_result and analysis_result.uses_gpai:
-                        final_code_signals.uses_gpai = True
-                        logger.info(f"GPAI usage detected by AST analysis in: {file_path_abs}")
-                except Exception as e:
-                    logger.error(f"Error during AST analysis of {file_path_abs}: {e}")
+        for file_path_abs in python_files_for_ast_abs:
+            logger.debug(f"Analyzing Python file (AST from cache): {file_path_abs}")
+            file_content = file_contents_cache.get(file_path_abs)
+            if file_content is None:
+                logger.warning(f"Skipping AST analysis for {file_path_abs}, content not available.")
+                continue
+            try:
+                # analyze_python_code_ast expects path and content.
+                analysis_result: Optional[CodeAnalysisResult] = analyze_python_code_ast(file_path_abs, file_content)
+                if analysis_result and analysis_result.uses_gpai:
+                    final_code_signals.uses_gpai = True
+                    logger.info(f"GPAI usage detected by AST analysis in: {file_path_abs}")
+            except Exception as e:
+                logger.error(f"Error during AST analysis of {file_path_abs}: {e}")
 
-            # Step 3b: Prepare content for vector embedding (docs, code, api specs)
-            logger.info("Step 3b: Preparing content for vector embedding...")
-            # repo_files_for_embedding already initialized
+        # Step 3b: Prepare content for vector embedding (docs, code, api specs)
+        logger.info("Step 3b: Preparing content for vector embedding...")
+        # repo_files_for_embedding already initialized
 
-            # Process Markdown files for embedding
-            for doc_path_abs in markdown_file_paths_abs: # Use the specific list of markdown files
-                content = file_contents_cache.get(doc_path_abs)
-                if content is not None:
-                    repo_files_for_embedding.append(RepositoryFile(
-                        path=os.path.relpath(doc_path_abs, temp_dir),
-                        content=content,
-                        file_type='markdown'
-                    ))
-                else:
-                    logger.warning(f"Could not prepare (embedding) doc file {doc_path_abs}: content not in cache.")
+        # Process Markdown files for embedding
+        markdown_file_paths_rel = markdown_files_rel
+        for md_file_rel_path in markdown_file_paths_rel: # Use the specific list of markdown files
+            md_file_abs_path = os.path.join(unzipped_path, md_file_rel_path)
+            content = file_contents_cache.get(md_file_abs_path)
+            if content is not None:
+                repo_files_for_embedding.append(RepositoryFile(
+                    path=md_file_rel_path, # Store relative path
+                    content=content,
+                    file_type='markdown'
+                ))
+            else:
+                logger.warning(f"Could not prepare (embedding) doc file {md_file_abs_path}: content not in cache.")
 
-            # Process all code files for embedding (includes Python, JS, TS etc.)
-            # all_code_files_abs already defined
-            for code_file_path_abs in all_code_files_abs:
-                content = file_contents_cache.get(code_file_path_abs)
-                if content is not None:
-                    file_extension = os.path.splitext(code_file_path_abs)[1].lower()
-                    repo_files_for_embedding.append(RepositoryFile(
-                        path=os.path.relpath(code_file_path_abs, temp_dir),
-                        content=content,
-                        file_type=f"code_{file_extension.lstrip('.')}" # e.g. code_py, code_js
-                    ))
-                else:
-                    logger.warning(f"Could not prepare (embedding) code file {code_file_path_abs}: content not in cache.")
+        # Process all code files for embedding (includes Python, JS, TS etc.)
+        all_code_files_rel_paths = [
+            rel_path for lang_paths in code_files_by_lang_rel.values() for rel_path in lang_paths
+        ]
+        for code_file_rel_path in all_code_files_rel_paths:
+            code_file_abs_path = os.path.join(unzipped_path, code_file_rel_path)
+            content = file_contents_cache.get(code_file_abs_path)
+            if content is not None:
+                file_extension = os.path.splitext(code_file_abs_path)[1].lower()
+                repo_files_for_embedding.append(RepositoryFile(
+                    path=code_file_rel_path, # Store relative path
+                    content=content,
+                    file_type=f"code_{file_extension.lstrip('.')}" 
+                ))
+            else:
+                logger.warning(f"Could not prepare (embedding) code file {code_file_abs_path}: content not in cache.")
 
-            # Process OpenAPI spec files for embedding
-            # openapi_specs_abs already defined
-            for api_spec_path_abs in openapi_specs_abs:
-                content = file_contents_cache.get(api_spec_path_abs)
-                if content is not None:
-                    repo_files_for_embedding.append(RepositoryFile(
-                        path=os.path.relpath(api_spec_path_abs, temp_dir),
-                        content=content,
-                        file_type='openapi'
-                    ))
-                else:
-                    logger.warning(f"Could not prepare (embedding) API spec file {api_spec_path_abs}: content not in cache.")
+        # Process OpenAPI spec files for embedding
+        openapi_specs_rel = openapi_files_rel
+        for api_spec_rel_path in openapi_specs_rel:
+            api_spec_abs_path = os.path.join(unzipped_path, api_spec_rel_path)
+            content = file_contents_cache.get(api_spec_abs_path)
+            if content is not None:
+                repo_files_for_embedding.append(RepositoryFile(
+                    path=api_spec_rel_path, # Store relative path
+                    content=content,
+                    file_type='openapi'
+                ))
+            else:
+                logger.warning(f"Could not prepare (embedding) API spec file {api_spec_abs_path}: content not in cache.")
 
-            # Step 3c: Grep Search (if configured)
-            logger.info("Step 2 (Agent Spec): Grep Risk Signals...")
-            grep_signals_found: List[GrepSignalItem] = await run_grep_search(unzipped_path)
-            logger.info(f"Found {len(grep_signals_found)} grep signals.")
+        # Step 3c: Grep Search (if configured)
+        logger.info("Step 2 (Agent Spec): Grep Risk Signals...")
+        # run_grep_search expects the root directory of the unzipped repo and patterns
+        grep_search_results_raw: List[Dict[str, Any]] = await run_in_threadpool(
+            run_grep_search, 
+            repo_dir=unzipped_path,
+            patterns=GREP_PATTERNS # Pass the defined patterns
+        )
+        # Convert raw dicts to GrepSignalItem models
+        # Pydantic will ignore the extra 'pattern' key from run_grep_search's dicts
+        grep_signals_found: List[GrepSignalItem] = [
+            GrepSignalItem(**item) for item in grep_search_results_raw
+        ]
+        logger.info(f"Found {len(grep_signals_found)} grep signals.")
 
-            # --- Vector-Assisted Fuzzy Classification Steps (Refactored for ChromaDB) ---
-            if llm_service.is_openai_configured() and full_obligations_data:
-                if repo_files_for_embedding:
-                    logger.info("Upserting repository documents to ChromaDB...")
-                    repo_doc_ids = await upsert_repository_documents(repo_files_for_embedding)
-                    logger.info(f"Upserted {len(repo_doc_ids)} repository documents/chunks to ChromaDB.")
+        # --- Vector-Assisted Fuzzy Classification Steps (Refactored for ChromaDB) ---
+        if llm_service.is_openai_configured() and full_obligations_data:
+            if repo_files_for_embedding:
+                logger.info("Upserting repository documents to ChromaDB...")
+                repo_doc_ids = await upsert_repository_documents(repo_files_for_embedding)
+                logger.info(f"Upserted {len(repo_doc_ids)} repository documents/chunks to ChromaDB.")
 
-                    logger.info("Finding fuzzy matches: comparing repository content against obligations in ChromaDB...")
-                    cumulative_fuzzy_matches: List[FuzzyMatchResult] = []
-                    for repo_file_item in repo_files_for_embedding:
-                        if not repo_file_item.content:
-                            continue
-                        
-                        file_chunks = text_splitter.split_text(repo_file_item.content)
-                        
-                        for i, chunk_text in enumerate(file_chunks):
-                            chunk_metadata = {
-                                "source_type": "repository_file", # Consistent with ChromaDB metadata
-                                "source_identifier": repo_file_item.path, 
-                                "file_type": repo_file_item.file_type,
-                                "language": getattr(repo_file_item, 'language', None) if repo_file_item.file_type == "code" else None,
-                                "chunk_index": i
-                            }
-                            matches_for_chunk = await find_matching_obligations_for_repo_doc(
-                                repo_doc_content=chunk_text,
-                                repo_doc_metadata=chunk_metadata # Pass metadata of the repo chunk
-                            )
-                            cumulative_fuzzy_matches.extend(matches_for_chunk)
+                logger.info("Finding fuzzy matches: comparing repository content against obligations in ChromaDB...")
+                cumulative_fuzzy_matches: List[FuzzyMatchResult] = []
+                for repo_file_item in repo_files_for_embedding:
+                    if not repo_file_item.content:
+                        continue
                     
-                    all_fuzzy_matches = cumulative_fuzzy_matches # Assign to the variable used later
-                    logger.info(f"Found a total of {len(all_fuzzy_matches)} fuzzy matches after processing all repo content.")
-                else:
-                    logger.info("No repository content prepared for embedding/matching. Skipping vector-based fuzzy matching.")
+                    file_chunks = text_splitter.split_text(repo_file_item.content)
+                    
+                    for i, chunk_text in enumerate(file_chunks):
+                        chunk_metadata = {
+                            "source_type": "repository_file", # Consistent with ChromaDB metadata
+                            "source_identifier": repo_file_item.path, 
+                            "file_type": repo_file_item.file_type,
+                            "language": getattr(repo_file_item, 'language', None) if repo_file_item.file_type == "code" else None,
+                            "chunk_index": i
+                        }
+                        matches_for_chunk = await find_matching_obligations_for_repo_doc(
+                            repo_doc_content=chunk_text,
+                            repo_doc_metadata=chunk_metadata # Pass metadata of the repo chunk
+                        )
+                        cumulative_fuzzy_matches.extend(matches_for_chunk)
+                
+                all_fuzzy_matches = cumulative_fuzzy_matches # Assign to the variable used later
+                logger.info(f"Found a total of {len(all_fuzzy_matches)} fuzzy matches after processing all repo content.")
             else:
-                logger.warning("Skipping vector-assisted fuzzy classification: LLMService not configured, obligations not loaded, or no repo content.")
-            # --- END: Vector-Assisted Fuzzy Classification Steps ---
+                logger.info("No repository content prepared for embedding/matching. Skipping vector-based fuzzy matching.")
+        else:
+            logger.warning("Skipping vector-assisted fuzzy classification: LLMService not configured, obligations not loaded, or no repo content.")
+        # --- END: Vector-Assisted Fuzzy Classification Steps ---
 
-            # Step 5: Classify risk tier with detailed analysis
-            logger.info("Step 5: Performing deep compliance analysis...")
-            determined_tier, analysis_details = await determine_risk_tier(
-                doc_summary_bullets, 
-                final_code_signals, 
-                grep_signals_found,
-                full_obligations_data
-            )
-            logger.info(f"Determined risk tier: {determined_tier} with {len(analysis_details.get(determined_tier, {}).get('matches', []))} matches")
-            
-            # Log detailed analysis information
-            logger.info(f"Analysis details: Found {len(analysis_details.get('detected_keywords', []))} keywords, {len(analysis_details.get('code_signals', []))} code signals, and {len(analysis_details.get('documentation_signals', []))} documentation signals")
-            
-            # Step 6: Lookup checklist
-            logger.info("Step 6: Looking up checklist based on tier...")
-            checklist_items = load_and_get_checklist_for_tier(determined_tier, full_obligations_data)
+        # Step 5: Classify risk tier with detailed analysis
+        logger.info("Step 5: Performing deep compliance analysis...")
+        determined_tier, analysis_details = await determine_risk_tier(
+            doc_summary_bullets, 
+            final_code_signals, 
+            grep_signals_found,
+            full_obligations_data
+        )
+        logger.info(f"Determined risk tier: {determined_tier} with {len(analysis_details.get(determined_tier, {}).get('matches', []))} matches")
+        
+        # Log detailed analysis information
+        logger.info(f"Analysis details: Found {len(analysis_details.get('detected_keywords', []))} keywords, {len(analysis_details.get('code_signals', []))} code signals, and {len(analysis_details.get('documentation_signals', []))} documentation signals")
+        
+        # Step 6: Lookup checklist
+        logger.info("Step 6: Looking up checklist based on tier...")
+        checklist_items = load_and_get_checklist_for_tier(determined_tier, full_obligations_data)
 
-            # Step 7: Persist & Respond (Assemble ScanResultModel)
-            logger.info("Step 7: Assembling final scan result with detailed analysis...")
-            
-            # Convert the analysis_details dict to a ComplianceAnalysisDetails model
-            from app.models import ComplianceAnalysisDetails, TierAnalysis, ComplianceMatch
-            
-            # Create the ComplianceAnalysisDetails model from the analysis_details dict
-            compliance_analysis = ComplianceAnalysisDetails(
-                prohibited=TierAnalysis(
-                    matches=[ComplianceMatch(**match) for match in analysis_details.get("prohibited", {}).get("matches", [])],
-                    score=analysis_details.get("prohibited", {}).get("score", 0)
-                ),
-                high=TierAnalysis(
-                    matches=[ComplianceMatch(**match) for match in analysis_details.get("high", {}).get("matches", [])],
-                    score=analysis_details.get("high", {}).get("score", 0)
-                ),
-                limited=TierAnalysis(
-                    matches=[ComplianceMatch(**match) for match in analysis_details.get("limited", {}).get("matches", [])],
-                    score=analysis_details.get("limited", {}).get("score", 0)
-                ),
-                minimal=TierAnalysis(
-                    matches=[ComplianceMatch(**match) for match in analysis_details.get("minimal", {}).get("matches", [])],
-                    score=analysis_details.get("minimal", {}).get("score", 0)
-                ),
-                detected_keywords=analysis_details.get("detected_keywords", []),
-                code_signals=[ComplianceMatch(**signal) for signal in analysis_details.get("code_signals", [])],
-                documentation_signals=[ComplianceMatch(**signal) for signal in analysis_details.get("documentation_signals", [])]
-            )
-            
-            # Create evidence snippets from the analysis details
-            evidence_snippets = {}
-            
-            # Add code snippets from code signals
-            for i, signal in enumerate(analysis_details.get("code_signals", [])):
-                if signal.get("file_path") and signal.get("line_content"):
-                    key = f"code_snippet_{i+1}"
-                    evidence_snippets[key] = {
-                        "file": signal.get("file_path"),
-                        "line": signal.get("line_number"),
-                        "content": signal.get("line_content"),
-                        "obligation_id": signal.get("obligation_id"),
-                        "obligation_title": signal.get("obligation_title"),
-                        "confidence": signal.get("confidence")
-                    }
-            
-            # Add documentation snippets from documentation signals
-            for i, signal in enumerate(analysis_details.get("documentation_signals", [])):
-                if signal.get("source_content"):
-                    key = f"doc_snippet_{i+1}"
-                    evidence_snippets[key] = {
-                        "content": signal.get("source_content"),
-                        "obligation_id": signal.get("obligation_id"),
-                        "obligation_title": signal.get("obligation_title"),
-                        "confidence": signal.get("confidence")
-                    }
-            
-            scan_result = ScanResultModel(
-                tier=determined_tier,
-                checklist=checklist_items,
-                doc_summary=doc_summary_bullets,
-                code_signals=final_code_signals,
-                grep_signals=grep_signals_found,
-                fuzzy_matches=all_fuzzy_matches, 
-                repo_url=repo_url_str,
-                commit_sha=actual_commit_sha, 
-                timestamp=datetime.now(timezone.utc),
-                evidence_snippets=evidence_snippets,
-                analysis_details=compliance_analysis
-            )
-            
-            logger.info(f"Scan complete. Tier: {determined_tier}. Fuzzy matches: {len(all_fuzzy_matches)}. Final result: {scan_result.model_dump_json(indent=2, exclude_none=True)}")
-            return scan_result
+        # Step 7: Persist & Respond (Assemble ScanResultModel)
+        logger.info("Step 7: Assembling final scan result with detailed analysis...")
+        
+        # Convert the analysis_details dict to a ComplianceAnalysisDetails model
+        from app.models import ComplianceAnalysisDetails, TierAnalysis, ComplianceMatch
+        
+        # Create the ComplianceAnalysisDetails model from the analysis_details dict
+        compliance_analysis = ComplianceAnalysisDetails(
+            prohibited=TierAnalysis(
+                matches=[ComplianceMatch(**match) for match in analysis_details.get("prohibited", {}).get("matches", [])],
+                score=analysis_details.get("prohibited", {}).get("score", 0)
+            ),
+            high=TierAnalysis(
+                matches=[ComplianceMatch(**match) for match in analysis_details.get("high", {}).get("matches", [])],
+                score=analysis_details.get("high", {}).get("score", 0)
+            ),
+            limited=TierAnalysis(
+                matches=[ComplianceMatch(**match) for match in analysis_details.get("limited", {}).get("matches", [])],
+                score=analysis_details.get("limited", {}).get("score", 0)
+            ),
+            minimal=TierAnalysis(
+                matches=[ComplianceMatch(**match) for match in analysis_details.get("minimal", {}).get("matches", [])],
+                score=analysis_details.get("minimal", {}).get("score", 0)
+            ),
+            detected_keywords=analysis_details.get("detected_keywords", []),
+            code_signals=[ComplianceMatch(**signal) for signal in analysis_details.get("code_signals", [])],
+            documentation_signals=[ComplianceMatch(**signal) for signal in analysis_details.get("documentation_signals", [])]
+        )
+        
+        # Create evidence snippets from the analysis details
+        evidence_snippets = {}
+        
+        # Add code snippets from code signals
+        for i, signal in enumerate(analysis_details.get("code_signals", [])):
+            if signal.get("file_path") and signal.get("line_content"):
+                key = f"code_snippet_{i+1}"
+                evidence_snippets[key] = {
+                    "file": signal.get("file_path"),
+                    "line": signal.get("line_number"),
+                    "content": signal.get("line_content"),
+                    "obligation_id": signal.get("obligation_id"),
+                    "obligation_title": signal.get("obligation_title"),
+                    "confidence": signal.get("confidence")
+                }
+        
+        # Add documentation snippets from documentation signals
+        for i, signal in enumerate(analysis_details.get("documentation_signals", [])):
+            if signal.get("source_content"):
+                key = f"doc_snippet_{i+1}"
+                evidence_snippets[key] = {
+                    "content": signal.get("source_content"),
+                    "obligation_id": signal.get("obligation_id"),
+                    "obligation_title": signal.get("obligation_title"),
+                    "confidence": signal.get("confidence")
+                }
+        
+        scan_result = ScanResultModel(
+            tier=determined_tier,
+            checklist=checklist_items,
+            doc_summary=doc_summary_bullets,
+            code_signals=final_code_signals,
+            grep_signals=grep_signals_found,
+            fuzzy_matches=all_fuzzy_matches, 
+            repo_url=f"https://github.com/{repo_info.owner}/{repo_info.repo}",
+            commit_sha=actual_commit_sha, 
+            timestamp=datetime.now(timezone.utc),
+            evidence_snippets=evidence_snippets,
+            analysis_details=compliance_analysis
+        )
+        
+        logger.info(f"Scan complete. Tier: {determined_tier}. Fuzzy matches: {len(all_fuzzy_matches)}. Final result: {scan_result.model_dump_json(indent=2, exclude_none=True)}")
+        await _send_ws_progress(ws_manager, scan_id, "completed", "Scan completed successfully.", {"tier": determined_tier, "result_summary": scan_result.model_dump(exclude_none=True, mode='json')})
+        return scan_result
 
-        except Exception as inner_e: # Exception handler for the INNER try block (core scanning steps)
-            logger.error(f"Error during core repository scanning steps (1-7): {inner_e}", exc_info=True)
-            raise # Re-raise the exception to be caught by the outer try's except block or propagate
+    except Exception as inner_e: # Exception handler for the INNER try block (core scanning steps)
+        logger.error(f"Error during core repository scanning steps (1-7): {inner_e}", exc_info=True)
+        await _send_ws_progress(ws_manager, scan_id, "error", "An error occurred during the scan.", {"error_details": str(inner_e)})
+        raise # Re-raise the exception to be caught by the outer try's except block or propagate
 
     except Exception as e: # Outer try's exception handler
         logger.error(f"Overall error in scan_repo: {e}", exc_info=True)
+        await _send_ws_progress(ws_manager, scan_id, "error", "An error occurred during the scan.", {"error_details": str(e)})
         raise
     finally: # Outer try's finally block (ensures temp_dir cleanup)
         if temp_dir and os.path.exists(temp_dir):

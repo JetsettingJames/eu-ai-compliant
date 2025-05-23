@@ -490,8 +490,8 @@ class BenchmarkManager:
                         <td>{result.min_time:.6f}</td>
                         <td>{result.max_time:.6f}</td>
                         <td>{result.std_dev:.6f}</td>
-                        <td>{result.peak_memory / (1024 * 1024):.2f if result.memory_usage else "N/A"}</td>
-                        <td>{result.avg_memory_diff / (1024 * 1024):.2f if result.memory_usage else "N/A"}</td>
+                        <td>{f"{result.peak_memory / (1024 * 1024):.2f}" if result.memory_usage else "N/A"}</td>
+                        <td>{f"{result.avg_memory_diff / (1024 * 1024):.2f}" if result.memory_usage else "N/A"}</td>
                     </tr>
                     ''' for result in results)}
                 </table>

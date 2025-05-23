@@ -1,0 +1,47 @@
+{
+  "name": "test_find_documentation_files_performance",
+  "timestamp": "2025-05-23T19:49:40.978068",
+  "execution_times": {
+    "values": [
+      0.0007060419302433729,
+      0.0005444170674309134,
+      0.000428917002864182,
+      0.00045195792336016893,
+      0.0002785000251606107
+    ],
+    "avg": 0.0004819667898118496,
+    "median": 0.00045195792336016893,
+    "min": 0.0002785000251606107,
+    "max": 0.0007060419302433729,
+    "std_dev": 0.00015749860476576882
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        406,
+        406
+      ],
+      [
+        430,
+        430
+      ],
+      [
+        294,
+        294
+      ],
+      [
+        294,
+        294
+      ],
+      [
+        294,
+        294
+      ]
+    ],
+    "peak_bytes": 430,
+    "avg_diff_bytes": 343.6
+  },
+  "metadata": {
+    "description": "Benchmark for find_documentation_files function"
+  }
+}

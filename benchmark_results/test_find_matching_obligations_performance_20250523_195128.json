@@ -1,0 +1,37 @@
+{
+  "name": "test_find_matching_obligations_performance",
+  "timestamp": "2025-05-23T19:51:28.990846",
+  "execution_times": {
+    "values": [
+      0.00013041705824434757,
+      0.00010795798152685165,
+      0.00010462501086294651
+    ],
+    "avg": 0.00011433335021138191,
+    "median": 0.00010795798152685165,
+    "min": 0.00010462501086294651,
+    "max": 0.00013041705824434757,
+    "std_dev": 1.4028236575880668e-05
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        2632,
+        2632
+      ],
+      [
+        2696,
+        2696
+      ],
+      [
+        3144,
+        3144
+      ]
+    ],
+    "peak_bytes": 3144,
+    "avg_diff_bytes": 2824
+  },
+  "metadata": {
+    "description": "Benchmark for find_matching_obligations_for_repo_doc function"
+  }
+}

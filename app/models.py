@@ -123,6 +123,11 @@ class ErrorResponse(BaseModel):
     error: str
     details: Optional[str] = None
 
+class ScanInitiatedResponse(BaseModel):
+    scan_id: str
+    message: str
+    websocket_url: str
+
 # --- LangGraph State Model ---
 
 class RiskTier(str, Enum):

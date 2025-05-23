@@ -1,0 +1,47 @@
+{
+  "name": "test_analyze_python_code_performance",
+  "timestamp": "2025-05-23T19:46:46.216635",
+  "execution_times": {
+    "values": [
+      6.770796608179808e-05,
+      5.395803600549698e-05,
+      4.800001624971628e-05,
+      4.583306144922972e-05,
+      4.537496715784073e-05
+    ],
+    "avg": 5.217480938881636e-05,
+    "median": 4.800001624971628e-05,
+    "min": 4.537496715784073e-05,
+    "max": 6.770796608179808e-05,
+    "std_dev": 9.331979600610594e-06
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        604,
+        604
+      ],
+      [
+        604,
+        604
+      ],
+      [
+        604,
+        604
+      ],
+      [
+        604,
+        604
+      ],
+      [
+        604,
+        604
+      ]
+    ],
+    "peak_bytes": 604,
+    "avg_diff_bytes": 604
+  },
+  "metadata": {
+    "description": "Benchmark for analyze_python_code_ast function"
+  }
+}

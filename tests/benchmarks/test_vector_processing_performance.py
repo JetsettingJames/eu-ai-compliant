@@ -14,13 +14,11 @@ from langchain_chroma import Chroma
 from app.vector_processing import (
     upsert_repository_documents,
     upsert_obligation_documents,
-    find_matching_obligations_for_repo_doc,
-    find_fuzzy_matches
+    find_matching_obligations_for_repo_doc
 )
 from app.models import (
     RepositoryFile,
-    FuzzyMatchResult,
-    EmbeddedContentItem
+    FuzzyMatchResult
 )
 from app.config import settings
 
@@ -142,41 +140,16 @@ def mock_obligations_data():
 
 @pytest.fixture
 def mock_embedded_content():
-    """Mock embedded content for benchmarking."""
-    return [
-        EmbeddedContentItem(
-            id="doc_1",
-            content="This is a test repository for benchmarking the vector processing module.",
-            metadata={
-                "source": "README.md",
-                "type": "doc"
-            }
-        ),
-        EmbeddedContentItem(
-            id="doc_2",
-            content="The system processes data using machine learning techniques.",
-            metadata={
-                "source": "README.md",
-                "type": "doc"
-            }
-        ),
-        EmbeddedContentItem(
-            id="doc_3",
-            content="It ensures high quality of data through validation and preprocessing.",
-            metadata={
-                "source": "README.md",
-                "type": "doc"
-            }
-        ),
-        EmbeddedContentItem(
-            id="doc_4",
-            content="The system provides transparency to users through detailed logs and explanations.",
-            metadata={
-                "source": "README.md",
-                "type": "doc"
-            }
-        )
-    ]
+    """Mock embedded content for benchmarking find_matching_obligations_for_repo_doc.
+    Returns a tuple of (repo_doc_content_str, repo_doc_metadata_dict).
+    """
+    repo_doc_content_str = "This is a sample repository document about data quality and transparency."
+    repo_doc_metadata_dict = {
+        "source_identifier": "sample/repo/doc.md",
+        "source_type": "repository_file",
+        "file_type": "doc"
+    }
+    return repo_doc_content_str, repo_doc_metadata_dict
 
 
 @pytest.fixture
@@ -196,14 +169,16 @@ def mock_vector_store():
           metadata={"description": "Benchmark for upsert_repository_documents function"})
 async def test_upsert_repository_documents_performance(mock_repository_files, mock_vector_store):
     """Benchmark the upsert_repository_documents function."""
-    with patch('app.vector_processing.get_vector_store', return_value=mock_vector_store):
-        with patch('app.vector_processing.text_splitter') as mock_splitter:
-            # Configure the text splitter to return simple chunks
-            mock_splitter.split_text.side_effect = lambda text: [text[:100], text[100:200]] if len(text) > 100 else [text]
-            
-            result = await upsert_repository_documents(mock_repository_files)
-            assert result is not None
-            return result
+    with patch('app.vector_processing.vector_store', new=mock_vector_store):
+        # Mock the behavior of add_texts or add_documents if necessary
+        # For example, if upsert_repository_documents calls vector_store.add_documents:
+        mock_vector_store.add_documents = AsyncMock(return_value=["doc_id_1", "doc_id_2"])
+        
+        result_ids = await upsert_repository_documents(repo_files=mock_repository_files)
+        assert result_ids is not None
+        assert len(result_ids) > 0
+        mock_vector_store.add_documents.assert_called()
+    return result_ids
 
 
 @pytest.mark.asyncio
@@ -211,14 +186,15 @@ async def test_upsert_repository_documents_performance(mock_repository_files, mo
           metadata={"description": "Benchmark for upsert_obligation_documents function"})
 async def test_upsert_obligation_documents_performance(mock_obligations_data, mock_vector_store):
     """Benchmark the upsert_obligation_documents function."""
-    with patch('app.vector_processing.get_vector_store', return_value=mock_vector_store):
-        with patch('app.vector_processing.text_splitter') as mock_splitter:
-            # Configure the text splitter to return simple chunks
-            mock_splitter.split_text.side_effect = lambda text: [text[:100], text[100:200]] if len(text) > 100 else [text]
-            
-            result = await upsert_obligation_documents(mock_obligations_data)
-            assert result is not None
-            return result
+    with patch('app.vector_processing.vector_store', new=mock_vector_store):
+        # Mock the behavior of add_texts or add_documents
+        mock_vector_store.add_documents = AsyncMock(return_value=["obl_id_1", "obl_id_2"])
+        
+        result_ids = await upsert_obligation_documents(obligations_data=mock_obligations_data)
+        assert result_ids is not None
+        assert len(result_ids) > 0
+        mock_vector_store.add_documents.assert_called()
+    return result_ids
 
 
 @pytest.mark.asyncio
@@ -226,95 +202,16 @@ async def test_upsert_obligation_documents_performance(mock_obligations_data, mo
           metadata={"description": "Benchmark for find_matching_obligations_for_repo_doc function"})
 async def test_find_matching_obligations_performance(mock_embedded_content, mock_vector_store):
     """Benchmark the find_matching_obligations_for_repo_doc function."""
-    with patch('app.vector_processing.get_vector_store', return_value=mock_vector_store):
-        result = await find_matching_obligations_for_repo_doc(mock_embedded_content)
+    repo_doc_content, repo_doc_metadata = mock_embedded_content
+    # The mock_vector_store fixture is already set up to mock the vector_store used by find_matching_obligations_for_repo_doc
+    # No need to patch get_vector_store here if find_matching_obligations_for_repo_doc directly uses an imported vector_store instance.
+    # However, the function app.vector_processing.find_matching_obligations_for_repo_doc uses `vector_store.similarity_search_with_score`
+    # and `vector_store` is a global variable in that module, initialized with Chroma(...).
+    # So, we need to patch that global `vector_store` instance.
+    with patch('app.vector_processing.vector_store', new=mock_vector_store):
+        result = await find_matching_obligations_for_repo_doc(
+            repo_doc_content=repo_doc_content,
+            repo_doc_metadata=repo_doc_metadata
+        )
         assert result is not None
         return result
-
-
-@benchmark(iterations=5, warmup=1, track_memory=True,
-          metadata={"description": "Benchmark for find_fuzzy_matches function"})
-def test_find_fuzzy_matches_performance():
-    """Benchmark the find_fuzzy_matches function."""
-    # Create sample data for testing
-    repo_content = [
-        "This is a test repository for benchmarking.",
-        "The system processes data using machine learning techniques.",
-        "It ensures high quality of data through validation and preprocessing.",
-        "The system provides transparency to users through detailed logs and explanations."
-    ]
-    
-    obligation_content = [
-        "Data Quality: Ensure high quality of data through validation.",
-        "Transparency: Provide transparency to users through explanations.",
-        "Human Oversight: Ensure human oversight of AI systems."
-    ]
-    
-    # Mock similarity scores
-    similarity_scores = [
-        [0.85, 0.45, 0.30],  # Scores for repo_content[0]
-        [0.60, 0.50, 0.40],  # Scores for repo_content[1]
-        [0.90, 0.40, 0.35],  # Scores for repo_content[2]
-        [0.55, 0.88, 0.42]   # Scores for repo_content[3]
-    ]
-    
-    # Create mock embeddings function
-    def mock_get_embedding(text):
-        # Return a simple mock embedding
-        return [0.1] * 10
-    
-    # Create mock similarity function
-    def mock_calculate_similarity(embed1, embed2):
-        # Find the index of the texts to return the pre-defined similarity score
-        repo_idx = -1
-        for i, text in enumerate(repo_content):
-            if text in embed1 or text in embed2:
-                repo_idx = i
-                break
-        
-        obl_idx = -1
-        for i, text in enumerate(obligation_content):
-            if text in embed1 or text in embed2:
-                obl_idx = i
-                break
-        
-        if repo_idx >= 0 and obl_idx >= 0:
-            return similarity_scores[repo_idx][obl_idx]
-        return 0.5  # Default similarity
-    
-    with patch('app.vector_processing.calculate_cosine_similarity', side_effect=mock_calculate_similarity):
-        with patch('app.vector_processing.get_embedding', side_effect=mock_get_embedding):
-            result = find_fuzzy_matches(
-                repo_content=repo_content,
-                obligation_content=obligation_content,
-                similarity_threshold=0.75
-            )
-            
-            assert result is not None
-            assert len(result) > 0
-            return result
-
-
-def generate_performance_report():
-    """Generate a performance report from benchmark results."""
-    # Run benchmarks
-    asyncio.run(test_upsert_repository_documents_performance(mock_repository_files(), mock_vector_store()))
-    asyncio.run(test_upsert_obligation_documents_performance(mock_obligations_data(), mock_vector_store()))
-    asyncio.run(test_find_matching_obligations_performance(mock_embedded_content(), mock_vector_store()))
-    test_find_fuzzy_matches_performance()
-    
-    # Load results
-    benchmark_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'benchmark_results')
-    result_files = [os.path.join(benchmark_dir, f) for f in os.listdir(benchmark_dir) if f.endswith('.json')]
-    
-    results = [BenchmarkManager.load_result(f) for f in result_files]
-    
-    # Generate report
-    report_path = BenchmarkManager.generate_report(results)
-    print(f"Performance report generated at: {report_path}")
-    
-    return report_path
-
-
-if __name__ == "__main__":
-    generate_performance_report()

@@ -1,0 +1,37 @@
+{
+  "name": "test_upsert_obligation_documents_performance",
+  "timestamp": "2025-05-23T19:51:28.808894",
+  "execution_times": {
+    "values": [
+      0.0015267090639099479,
+      0.0012622500071302056,
+      0.0012634999584406614
+    ],
+    "avg": 0.001350819676493605,
+    "median": 0.0012634999584406614,
+    "min": 0.0012622500071302056,
+    "max": 0.0015267090639099479,
+    "std_dev": 0.00015232595986515858
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        127853,
+        127853
+      ],
+      [
+        129005,
+        129005
+      ],
+      [
+        128981,
+        128981
+      ]
+    ],
+    "peak_bytes": 129005,
+    "avg_diff_bytes": 128613
+  },
+  "metadata": {
+    "description": "Benchmark for upsert_obligation_documents function"
+  }
+}

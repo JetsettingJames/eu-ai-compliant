@@ -1,0 +1,47 @@
+{
+  "name": "test_extract_markdown_performance",
+  "timestamp": "2025-05-23T19:48:15.913357",
+  "execution_times": {
+    "values": [
+      0.00029429199639707804,
+      0.00023262493778020144,
+      0.00018562504556030035,
+      0.00015512504614889622,
+      0.0001432918943464756
+    ],
+    "avg": 0.00020219178404659032,
+    "median": 0.00018562504556030035,
+    "min": 0.0001432918943464756,
+    "max": 0.00029429199639707804,
+    "std_dev": 6.198297671189157e-05
+  },
+  "memory_usage": {
+    "measurements": [
+      [
+        2570,
+        2570
+      ],
+      [
+        2562,
+        2562
+      ],
+      [
+        2554,
+        2554
+      ],
+      [
+        2735,
+        2735
+      ],
+      [
+        2471,
+        2471
+      ]
+    ],
+    "peak_bytes": 2735,
+    "avg_diff_bytes": 2578.4
+  },
+  "metadata": {
+    "description": "Benchmark for extract_text_and_headings_from_markdown function"
+  }
+}

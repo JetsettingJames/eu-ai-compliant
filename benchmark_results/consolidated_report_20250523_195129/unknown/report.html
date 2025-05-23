@@ -1,0 +1,696 @@
+
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Benchmark Report</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 20px; }
+                    h1, h2 { color: #333; }
+                    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+                    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                    th { background-color: #f2f2f2; }
+                    tr:nth-child(even) { background-color: #f9f9f9; }
+                    .plot { margin: 20px 0; max-width: 100%; }
+                    .plot img { max-width: 100%; height: auto; }
+                    .metadata { margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-radius: 5px; }
+                </style>
+            </head>
+            <body>
+                <h1>Benchmark Report</h1>
+                <p>Generated on: 2025-05-23 19:51:38</p>
+                
+                <h2>Summary</h2>
+                <table>
+                    <tr>
+                        <th>Name</th>
+                        <th>Avg Time (s)</th>
+                        <th>Median Time (s)</th>
+                        <th>Min Time (s)</th>
+                        <th>Max Time (s)</th>
+                        <th>Std Dev (s)</th>
+                        <th>Peak Memory (MB)</th>
+                        <th>Avg Memory Diff (MB)</th>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_documentation_files_performance</td>
+                        <td>0.000321</td>
+                        <td>0.000318</td>
+                        <td>0.000273</td>
+                        <td>0.000397</td>
+                        <td>0.000048</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000213</td>
+                        <td>0.000192</td>
+                        <td>0.000159</td>
+                        <td>0.000323</td>
+                        <td>0.000065</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_analyze_python_code_performance</td>
+                        <td>0.000055</td>
+                        <td>0.000052</td>
+                        <td>0.000048</td>
+                        <td>0.000070</td>
+                        <td>0.000009</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_matching_obligations_performance</td>
+                        <td>0.000163</td>
+                        <td>0.000142</td>
+                        <td>0.000114</td>
+                        <td>0.000234</td>
+                        <td>0.000063</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_determine_risk_tier_performance</td>
+                        <td>0.000432</td>
+                        <td>0.000423</td>
+                        <td>0.000415</td>
+                        <td>0.000458</td>
+                        <td>0.000023</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_matching_obligations_performance</td>
+                        <td>0.000114</td>
+                        <td>0.000108</td>
+                        <td>0.000105</td>
+                        <td>0.000130</td>
+                        <td>0.000014</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_upsert_repository_documents_performance</td>
+                        <td>0.002106</td>
+                        <td>0.002054</td>
+                        <td>0.001915</td>
+                        <td>0.002349</td>
+                        <td>0.000221</td>
+                        <td>0.12</td>
+                        <td>0.12</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_upsert_repository_documents_performance</td>
+                        <td>0.001744</td>
+                        <td>0.001702</td>
+                        <td>0.001636</td>
+                        <td>0.001893</td>
+                        <td>0.000133</td>
+                        <td>0.12</td>
+                        <td>0.12</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_determine_risk_tier_performance</td>
+                        <td>0.000451</td>
+                        <td>0.000436</td>
+                        <td>0.000417</td>
+                        <td>0.000502</td>
+                        <td>0.000045</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_analyze_python_code_performance</td>
+                        <td>0.000058</td>
+                        <td>0.000050</td>
+                        <td>0.000048</td>
+                        <td>0.000091</td>
+                        <td>0.000018</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000147</td>
+                        <td>0.000139</td>
+                        <td>0.000130</td>
+                        <td>0.000174</td>
+                        <td>0.000018</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_analyze_python_code_performance</td>
+                        <td>0.000052</td>
+                        <td>0.000048</td>
+                        <td>0.000045</td>
+                        <td>0.000068</td>
+                        <td>0.000009</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_matching_obligations_performance</td>
+                        <td>0.000141</td>
+                        <td>0.000127</td>
+                        <td>0.000109</td>
+                        <td>0.000186</td>
+                        <td>0.000040</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_analyze_python_code_performance</td>
+                        <td>0.000051</td>
+                        <td>0.000048</td>
+                        <td>0.000046</td>
+                        <td>0.000065</td>
+                        <td>0.000008</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_documentation_files_performance</td>
+                        <td>0.000310</td>
+                        <td>0.000284</td>
+                        <td>0.000264</td>
+                        <td>0.000407</td>
+                        <td>0.000057</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_determine_risk_tier_performance</td>
+                        <td>0.000459</td>
+                        <td>0.000458</td>
+                        <td>0.000410</td>
+                        <td>0.000510</td>
+                        <td>0.000050</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000213</td>
+                        <td>0.000192</td>
+                        <td>0.000177</td>
+                        <td>0.000274</td>
+                        <td>0.000042</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_upsert_obligation_documents_performance</td>
+                        <td>0.001456</td>
+                        <td>0.001331</td>
+                        <td>0.001275</td>
+                        <td>0.001761</td>
+                        <td>0.000266</td>
+                        <td>0.12</td>
+                        <td>0.12</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000283</td>
+                        <td>0.000198</td>
+                        <td>0.000154</td>
+                        <td>0.000621</td>
+                        <td>0.000195</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_determine_risk_tier_performance</td>
+                        <td>0.000423</td>
+                        <td>0.000416</td>
+                        <td>0.000407</td>
+                        <td>0.000447</td>
+                        <td>0.000021</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_analyze_python_code_performance</td>
+                        <td>0.000056</td>
+                        <td>0.000053</td>
+                        <td>0.000049</td>
+                        <td>0.000070</td>
+                        <td>0.000009</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000188</td>
+                        <td>0.000169</td>
+                        <td>0.000154</td>
+                        <td>0.000260</td>
+                        <td>0.000043</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_find_documentation_files_performance</td>
+                        <td>0.000482</td>
+                        <td>0.000452</td>
+                        <td>0.000279</td>
+                        <td>0.000706</td>
+                        <td>0.000157</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_extract_markdown_performance</td>
+                        <td>0.000202</td>
+                        <td>0.000186</td>
+                        <td>0.000143</td>
+                        <td>0.000294</td>
+                        <td>0.000062</td>
+                        <td>0.00</td>
+                        <td>0.00</td>
+                    </tr>
+                    
+                    <tr>
+                        <td>test_upsert_obligation_documents_performance</td>
+                        <td>0.001351</td>
+                        <td>0.001263</td>
+                        <td>0.001262</td>
+                        <td>0.001527</td>
+                        <td>0.000152</td>
+                        <td>0.12</td>
+                        <td>0.12</td>
+                    </tr>
+                    
+                </table>
+                
+                <h2>Comparison</h2>
+                <div class="plot">
+                    <img src="comparison_plot.png" alt="Benchmark Comparison">
+                </div>
+                
+                <h2>Individual Benchmarks</h2>
+                
+                <div>
+                    <h3>test_find_documentation_files_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:24</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_documentation_files function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_documentation_files_performance_plot.png" alt="test_find_documentation_files_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:44:00</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_analyze_python_code_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:16</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for analyze_python_code_ast function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_analyze_python_code_performance_plot.png" alt="test_analyze_python_code_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_find_matching_obligations_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:47</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_matching_obligations_for_repo_doc function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_matching_obligations_performance_plot.png" alt="test_find_matching_obligations_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_determine_risk_tier_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:16</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for determine_risk_tier function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_determine_risk_tier_performance_plot.png" alt="test_determine_risk_tier_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_find_matching_obligations_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:28</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_matching_obligations_for_repo_doc function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_matching_obligations_performance_plot.png" alt="test_find_matching_obligations_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_upsert_repository_documents_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:44</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for upsert_repository_documents function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_upsert_repository_documents_performance_plot.png" alt="test_upsert_repository_documents_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_upsert_repository_documents_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:28</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for upsert_repository_documents function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_upsert_repository_documents_performance_plot.png" alt="test_upsert_repository_documents_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_determine_risk_tier_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:25</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for determine_risk_tier function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_determine_risk_tier_performance_plot.png" alt="test_determine_risk_tier_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_analyze_python_code_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:25</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for analyze_python_code_ast function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_analyze_python_code_performance_plot.png" alt="test_analyze_python_code_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:25</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_analyze_python_code_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:46:46</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for analyze_python_code_ast function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_analyze_python_code_performance_plot.png" alt="test_analyze_python_code_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_find_matching_obligations_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:45</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_matching_obligations_for_repo_doc function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_matching_obligations_performance_plot.png" alt="test_find_matching_obligations_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_analyze_python_code_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:44</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for analyze_python_code_ast function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_analyze_python_code_performance_plot.png" alt="test_analyze_python_code_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_find_documentation_files_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:43</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_documentation_files function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_documentation_files_performance_plot.png" alt="test_find_documentation_files_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_determine_risk_tier_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:44</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for determine_risk_tier function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_determine_risk_tier_performance_plot.png" alt="test_determine_risk_tier_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:41</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_upsert_obligation_documents_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:44</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for upsert_obligation_documents function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_upsert_obligation_documents_performance_plot.png" alt="test_upsert_obligation_documents_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:44</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_determine_risk_tier_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:41</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for determine_risk_tier function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_determine_risk_tier_performance_plot.png" alt="test_determine_risk_tier_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_analyze_python_code_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:41</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for analyze_python_code_ast function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_analyze_python_code_performance_plot.png" alt="test_analyze_python_code_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:46:45</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_find_documentation_files_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:49:40</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for find_documentation_files function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_find_documentation_files_performance_plot.png" alt="test_find_documentation_files_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_extract_markdown_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:48:15</p>
+                    <p>Iterations: 5</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for extract_text_and_headings_from_markdown function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_extract_markdown_performance_plot.png" alt="test_extract_markdown_performance Performance">
+                    </div>
+                </div>
+                
+                <div>
+                    <h3>test_upsert_obligation_documents_performance</h3>
+                    <p>Timestamp: 2025-05-23 19:51:28</p>
+                    <p>Iterations: 3</p>
+                    
+                    <div class="metadata">
+                        <h4>Metadata</h4>
+                        <p><strong>description:</strong> Benchmark for upsert_obligation_documents function</p>
+                    </div>
+                    
+                    <div class="plot">
+                        <img src="test_upsert_obligation_documents_performance_plot.png" alt="test_upsert_obligation_documents_performance Performance">
+                    </div>
+                </div>
+                
+            </body>
+            </html>
+            

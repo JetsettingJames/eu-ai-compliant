@@ -1,0 +1,20 @@
+Optimize test_upsert_repository_documents_performance: Currently takes 0.0021s on average.
+Optimize test_upsert_repository_documents_performance: Currently takes 0.0017s on average.
+Optimize test_upsert_obligation_documents_performance: Currently takes 0.0015s on average.
+Reduce memory usage in test_upsert_repository_documents_performance: Currently uses 0.12 MB at peak.
+  - Implement streaming for large document processing in test_upsert_repository_documents_performance.
+  - Consider reducing chunk size or optimizing text splitting strategy.
+  - Evaluate if a more memory-efficient vector store can be used.
+Reduce memory usage in test_upsert_repository_documents_performance: Currently uses 0.12 MB at peak.
+  - Implement streaming for large document processing in test_upsert_repository_documents_performance.
+  - Consider reducing chunk size or optimizing text splitting strategy.
+  - Evaluate if a more memory-efficient vector store can be used.
+Reduce memory usage in test_upsert_obligation_documents_performance: Currently uses 0.12 MB at peak.
+  - Implement streaming for large document processing in test_upsert_obligation_documents_performance.
+  - Consider reducing chunk size or optimizing text splitting strategy.
+  - Evaluate if a more memory-efficient vector store can be used.
+General optimization recommendations:
+  - Implement caching for frequently accessed data.
+  - Consider parallel processing for independent operations.
+  - Optimize database queries and reduce unnecessary I/O operations.
+  - Profile the application in production to identify real-world bottlenecks.

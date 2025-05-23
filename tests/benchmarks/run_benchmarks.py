@@ -25,13 +25,17 @@ os.makedirs(BENCHMARK_RESULTS_DIR, exist_ok=True)
 
 def run_benchmark_module(module_path: str) -> None:
     """
-    Run a benchmark module as a separate process.
+    Run a benchmark module as a separate process using pytest.
     
     Args:
         module_path: Path to the benchmark module
     """
-    print(f"Running benchmarks in {module_path}...")
-    subprocess.run([sys.executable, module_path], check=True)
+    print(f"Running benchmarks in {module_path} using pytest...")
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+    env = os.environ.copy()
+    env['PYTHONPATH'] = project_root + os.pathsep + env.get('PYTHONPATH', '')
+    # Use pytest to run the module
+    subprocess.run([sys.executable, "-m", "pytest", module_path], check=True, env=env)
 
 
 def run_all_benchmarks(modules: Optional[List[str]] = None) -> None:

@@ -180,15 +180,16 @@ def mock_obligations_data():
     }
 
 
-@benchmark(iterations=5, warmup=1, track_memory=True, 
+@benchmark(iterations=5, warmup=1, track_memory=True,
           metadata={"description": "Benchmark for find_documentation_files function"})
 def test_find_documentation_files_performance(mock_repo_path):
     """Benchmark the find_documentation_files function."""
-    result = find_documentation_files(mock_repo_path)
-    assert result is not None
-    assert "markdown" in result
-    assert "openapi" in result
-    return result
+    markdown_files, openapi_files = find_documentation_files(mock_repo_path)
+    
+    # Assert that markdown files were found and no openapi files were found (as per mock_repo_dir setup)
+    assert len(markdown_files) > 0, "Expected to find markdown files"
+    assert len(openapi_files) == 0, "Expected to find no openapi files"
+    return markdown_files, openapi_files
 
 
 @benchmark(iterations=5, warmup=1, track_memory=True,
@@ -280,30 +281,3 @@ async def test_scan_repo_performance():
     # and is more suitable for a separate integration test
     # that can be run in a controlled environment.
     pass
-
-
-def generate_performance_report():
-    """Generate a performance report from benchmark results."""
-    # Run benchmarks
-    test_find_documentation_files_performance(mock_repo_path())
-    test_extract_markdown_performance(mock_repo_path())
-    test_analyze_python_code_performance(mock_repo_path())
-    
-    # Run async benchmarks
-    asyncio.run(test_determine_risk_tier_performance(mock_obligations_data()))
-    
-    # Load results
-    benchmark_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'benchmark_results')
-    result_files = [os.path.join(benchmark_dir, f) for f in os.listdir(benchmark_dir) if f.endswith('.json')]
-    
-    results = [BenchmarkManager.load_result(f) for f in result_files]
-    
-    # Generate report
-    report_path = BenchmarkManager.generate_report(results)
-    print(f"Performance report generated at: {report_path}")
-    
-    return report_path
-
-
-if __name__ == "__main__":
-    generate_performance_report()
