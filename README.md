@@ -17,6 +17,10 @@ A comprehensive solution for scanning GitHub repositories to assess compliance w
 - [API Endpoints](#api-endpoints)
 - [Project Structure](#project-structure)
 - [Compliance Configuration](#compliance-configuration)
+- [Performance Testing](#performance-testing)
+  - [Benchmarking Framework](#benchmarking-framework)
+  - [Running Benchmarks](#running-benchmarks)
+  - [Optimization Recommendations](#optimization-recommendations)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -256,6 +260,49 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 5. Open a Pull Request
 
 Please make sure to update tests as appropriate and adhere to the existing coding style.
+
+## Performance Testing
+
+The EU AI Compliance Assistant includes a comprehensive benchmarking framework to measure, analyze, and improve performance across critical components of the system.
+
+### Benchmarking Framework
+
+The benchmarking framework provides tools for measuring execution time, memory usage, and system resource utilization. Key features include:
+
+- **Detailed Metrics**: Captures execution time (min, max, average, median), memory usage, and standard deviation.
+- **Visualization**: Generates performance plots for visual analysis of benchmark results.
+- **Comprehensive Reports**: Creates HTML and CSV reports with detailed performance data.
+- **Optimization Recommendations**: Automatically generates suggestions for performance improvements.
+
+### Running Benchmarks
+
+```bash
+# Run all benchmarks
+python -m tests.benchmarks.run_benchmarks
+
+# Run specific benchmark modules
+python -m tests.benchmarks.run_benchmarks --modules test_scanner_performance.py test_vector_processing_performance.py
+
+# Generate report from existing results without running benchmarks
+python -m tests.benchmarks.run_benchmarks --report-only
+```
+
+Benchmark results are stored in the `benchmark_results` directory, including JSON data files, performance plots, and HTML reports.
+
+### Optimization Recommendations
+
+The benchmarking framework automatically analyzes performance data and generates optimization recommendations. These recommendations target:
+
+1. **Slowest Operations**: Identifies the most time-consuming functions and suggests specific optimizations.
+2. **Memory Usage**: Highlights memory-intensive operations and provides strategies to reduce memory footprint.
+3. **General Improvements**: Offers general recommendations for caching, parallel processing, and I/O optimization.
+
+To implement these optimizations:
+
+1. Review the generated recommendations in `benchmark_results/consolidated_report_*/optimization_recommendations.txt`.
+2. Prioritize optimizations based on impact and implementation complexity.
+3. Implement changes incrementally, running benchmarks after each change to measure improvement.
+4. Focus on critical paths first, especially those in the scanner and vector processing modules.
 
 ## License
 
