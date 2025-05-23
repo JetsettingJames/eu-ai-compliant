@@ -33,3 +33,18 @@ htmlcov/
 
 # Temporary files from scanner
 repo_scan_*/
+
+# Database files
+eu_ai_compliant_dev.db
+*.sqlite
+*.sqlite3
+
+# Vector store
+chroma_db_store/
+
+# Python virtual environment
+# Environments
+.env
+.venv/
+venv/
+ENV/
