@@ -39,6 +39,14 @@ class CodeAnalysisResult(BaseModel):
     imported_modules: List[str] = Field(default_factory=list) # List of top-level modules imported in this file
     # Potentially add other specific findings like function calls or class instantiations later
 
+class CodeViolationDetail(BaseModel):
+    file_path: str
+    line_number: int
+    module_name: Optional[str] = None # e.g., the imported module
+    violating_code: Optional[str] = None # The actual line of code or relevant snippet
+    policy_category: str # e.g., "biometric", "live_stream", "gpai", "sensitive_data"
+    description: str # Brief description of why this is a violation
+
 class GrepSignalItem(BaseModel):
     file_path: str
     line_number: int
@@ -171,7 +179,7 @@ class APIScanResponse(BaseModel):
     tier: Optional[RiskTier] = None
     checklist: Optional[List[Dict[str, Any]]] = None
     doc_summary: Optional[List[str]] = None
-    evidence_snippets: Optional[CodeSignal] = None # Using CodeSignal as evidence for now
+    detailed_code_violations: Optional[List[CodeViolationDetail]] = Field(default_factory=list)
     error_messages: Optional[List[str]] = None # Include errors in the response
 
 class ScanPersistenceData(BaseModel):

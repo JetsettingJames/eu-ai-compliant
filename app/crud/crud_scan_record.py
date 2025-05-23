@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # Initialize cache service for scan records
 scan_record_cache = CacheService[Dict[str, Any]](dict, "scan_record")
 
-async def create_scan_record(db: AsyncSession, *, scan_data: ScanPersistenceData) -> Dict[str, Any]:
+async def create_scan_record(db: AsyncSession, *, scan_data: ScanPersistenceData) -> ScanRecord:
     """Create a new scan record in the database."""
     db_scan_record = ScanRecord(
         repo_url=scan_data.repo_url,
@@ -34,18 +34,18 @@ async def create_scan_record(db: AsyncSession, *, scan_data: ScanPersistenceData
     await db.flush() # Flush to get ID if needed before commit
     await db.refresh(db_scan_record) # Refresh to get DB-generated values like ID
     
-    # Convert to dict for response
-    record_dict = _scan_record_to_dict(db_scan_record)
+    # Convert to dict for caching if needed, but return the ORM object
+    record_dict_for_cache = _scan_record_to_dict(db_scan_record)
     
     # Cache the new record
-    await scan_record_cache.set(str(db_scan_record.id), record_dict)
+    await scan_record_cache.set(str(db_scan_record.id), record_dict_for_cache)
     
     # Invalidate any cached lists that might include this record
     await scan_record_cache.invalidate_pattern("list:*")
     if db_scan_record.repo_url:
         await scan_record_cache.invalidate_pattern(f"repo:{db_scan_record.repo_url}:*")
     
-    return record_dict
+    return db_scan_record # Return the ORM instance
 
 async def get_scan_record(db: AsyncSession, scan_id: str) -> Optional[Dict[str, Any]]:
     """Retrieve a scan record by its ID."""
@@ -168,7 +168,7 @@ def _scan_record_to_dict(record: ScanRecord) -> Dict[str, Any]:
         "risk_tier": record.risk_tier,
         "checklist": record.checklist,
         "doc_summary": record.doc_summary,
-        "scan_timestamp": record.scan_timestamp,
+        "scan_timestamp": record.scan_timestamp.isoformat(), # Convert datetime to ISO string
         "error_messages": record.error_messages
     }
 

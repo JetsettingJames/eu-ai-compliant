@@ -40,7 +40,7 @@ async def fetch_github_repo_branch_info(owner: str, repo_name: str, branch_name:
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    async with httpx.AsyncClient(headers=headers, timeout=20.0) as client:
+    async with httpx.AsyncClient(headers=headers, timeout=60.0) as client:
         actual_branch_name = branch_name
         if not actual_branch_name:
             # Fetch repository details to get the default branch

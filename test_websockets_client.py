@@ -5,6 +5,7 @@ import json
 import os
 
 FASTAPI_BASE_URL = os.getenv("FASTAPI_URL", "http://127.0.0.1:8000")
+API_V1_PREFIX = "/api/v1"
 # Using a small, well-known repo for testing. Replace if you have a preferred one.
 REPO_TO_SCAN = "https://github.com/octocat/Spoon-Knife"
 
@@ -12,7 +13,7 @@ async def test_scan_websockets():
     print(f"FastAPI Base URL: {FASTAPI_BASE_URL}")
     print(f"Initiating scan for: {REPO_TO_SCAN}\n")
     
-    scan_endpoint = f"{FASTAPI_BASE_URL}/scan/"
+    scan_endpoint = f"{FASTAPI_BASE_URL}{API_V1_PREFIX}/graph-scan/"
     
     try:
         # 1. Initiate the scan via HTTP POST

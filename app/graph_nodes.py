@@ -7,7 +7,7 @@ import tempfile
 import shutil
 import os
 import asyncio
-from .utils import get_repo_archive_info, download_repo_zip, unzip_archive, find_documentation_files, find_code_files, extract_text_and_headings_from_markdown, parse_openapi_file # Keep other utils imports
+from .utils import get_repo_archive_info, download_repo_zip, unzip_archive, find_documentation_files, find_code_files, extract_text_and_headings_from_markdown, parse_openapi_file, fetch_github_repo_branch_info # Import fetch_github_repo_branch_info
 from .config import settings
 from .logger import get_logger # Revert to get_logger from .logger
 from .services.llm_service import LLMService # Import LLMService
@@ -149,34 +149,41 @@ async def download_and_unzip_repo_node(state: ScanGraphState) -> Dict[str, Any]:
 
         # 1. Get repository archive info (target branch and commit SHA)
         logger_nodes.info(f"Fetching archive info for {repo_info.owner}/{repo_info.repo} (branch: {repo_info.branch})")
-        # get_repo_archive_info now returns (target_branch_name, commit_sha)
-        target_branch, actual_commit_sha = await get_repo_archive_info(
-            state.repo_info, # Pass the full RepoInfo object
-            settings.GITHUB_TOKEN
+        # Use fetch_github_repo_branch_info to get the actual branch and commit SHA
+        target_branch, actual_commit_sha = await fetch_github_repo_branch_info(
+            owner=repo_info.owner,
+            repo_name=repo_info.repo,
+            branch_name=repo_info.branch, # This can be None, fetch_github_repo_branch_info will get default
+            token=settings.GITHUB_TOKEN
         )
         logger_nodes.info(f"Got target branch: {target_branch}, Commit SHA: {actual_commit_sha}")
 
         # Construct the zipball URL using the commit SHA for precision
         # This zip_url is for logging/reference; download_repo_zip will construct its own based on commit_sha
-        constructed_zip_url_for_reference = f"https://api.github.com/repos/{repo_info.owner}/{repo_info.repo}/zipball/{actual_commit_sha}"
-        logger_nodes.info(f"Reference archive URL: {constructed_zip_url_for_reference}")
+        archive_url = f"https://api.github.com/repos/{repo_info.owner}/{repo_info.repo}/zipball/{actual_commit_sha}"
+        logger_nodes.info(f"Reference archive URL: {archive_url}")
 
         # 2. Download the repository zip file
         # The download_repo_zip function handles the creation of the zip_url and filename internally.
         # It expects RepoInfo, commit_sha/branch, token, and download_dir.
         logger_nodes.info(f"Downloading repository to {temp_dir} using commit SHA {actual_commit_sha}...")
         zip_file_path = await download_repo_zip(
-            repo_info=state.repo_info, 
-            commit_sha_or_branch=actual_commit_sha, 
-            token=settings.GITHUB_TOKEN, 
-            download_dir=temp_dir
+            archive_url=archive_url,
+            token=settings.GITHUB_TOKEN
         )
+
+        if not zip_file_path:
+            error_msg = "Failed to download repository zip file."
+            logger_nodes.error(error_msg)
+            error_messages.append(error_msg)
+            return {"temp_repo_path": None, "error_messages": error_messages}
+
         logger_nodes.info(f"Repository downloaded successfully to {zip_file_path}.")
 
         # 3. Unzip the archive
         logger_nodes.info(f"Unzipping archive {zip_file_path} to {temp_dir}...")
         # unzip_archive returns the path to the *actual content directory* within temp_dir
-        unzipped_content_path = await unzip_archive(zip_file_path, temp_dir) 
+        unzipped_content_path = unzip_archive(zip_file_path, temp_dir) 
         logger_nodes.info(f"Repository unzipped successfully to {unzipped_content_path}.")
 
         # Clean up the downloaded zip file as it's no longer needed
@@ -192,7 +199,7 @@ async def download_and_unzip_repo_node(state: ScanGraphState) -> Dict[str, Any]:
         return {
             "temp_repo_path": unzipped_content_path, # This is the path to the unzipped repo code
             "commit_sha": actual_commit_sha,
-            "repo_download_url": constructed_zip_url_for_reference, 
+            "repo_download_url": archive_url, 
             "error_messages": error_messages 
         }
 
@@ -225,14 +232,22 @@ async def discover_files_node(state: ScanGraphState) -> dict:
     try:
         logger_nodes.info(f"Discovering documentation files in {state.temp_repo_path}...")
         # Run synchronous glob operations in a separate thread
-        discovered_docs = await asyncio.to_thread(find_documentation_files, state.temp_repo_path)
-        for file_type, files in discovered_docs.items():
-            logger_nodes.info(f"Found {len(files)} {file_type} files.")
+        # find_documentation_files returns a tuple: (markdown_files, openapi_files)
+        markdown_files, openapi_files = await asyncio.to_thread(find_documentation_files, state.temp_repo_path)
+        
+        discovered_docs_dict = {}
+        if markdown_files:
+            discovered_docs_dict["markdown_files"] = markdown_files
+            logger_nodes.info(f"Found {len(markdown_files)} markdown_files files.")
+        if openapi_files:
+            discovered_docs_dict["openapi_files"] = openapi_files
+            logger_nodes.info(f"Found {len(openapi_files)} openapi_files files.")
 
         logger_nodes.info(f"Discovering code files in {state.temp_repo_path}...")
         # Run synchronous glob operations in a separate thread
-        discovered_code = await asyncio.to_thread(find_code_files, state.temp_repo_path)
-        for file_type, files in discovered_code.items():
+        # Assuming find_code_files returns a dictionary as expected
+        discovered_code_dict = await asyncio.to_thread(find_code_files, state.temp_repo_path)
+        for file_type, files in discovered_code_dict.items():
             logger_nodes.info(f"Found {len(files)} {file_type} code files.")
 
     except Exception as e:
@@ -246,8 +261,10 @@ async def discover_files_node(state: ScanGraphState) -> dict:
     # Ensure we don't overwrite existing keys if this node were to be run multiple times
     # or if other nodes also contribute to discovered_files (though not currently the case).
     updated_discovered_files = state.discovered_files.copy() # Start with existing
-    updated_discovered_files.update(discovered_docs)         # Add/overwrite doc files
-    updated_discovered_files.update(discovered_code)         # Add/overwrite code files
+    if discovered_docs_dict: # Use the constructed dictionary
+        updated_discovered_files.update(discovered_docs_dict)
+    if discovered_code_dict: # Use the result from find_code_files
+        updated_discovered_files.update(discovered_code_dict)
 
     logger_nodes.info(f"File discovery complete. Total discovered file categories: {len(updated_discovered_files)}")
     
@@ -268,7 +285,7 @@ async def process_discovered_files_node(state: ScanGraphState) -> dict:
     error_messages = list(state.error_messages)
 
     # Process Markdown files
-    markdown_files = state.discovered_files.get('markdown', [])
+    markdown_files = state.discovered_files.get('markdown_files', [])
     if markdown_files:
         logger_nodes.info(f"Processing {len(markdown_files)} Markdown files...")
         for md_file_path in markdown_files:
@@ -289,7 +306,7 @@ async def process_discovered_files_node(state: ScanGraphState) -> dict:
         logger_nodes.info("No Markdown files to process.")
 
     # Process OpenAPI files
-    openapi_files = state.discovered_files.get('openapi', [])
+    openapi_files = state.discovered_files.get('openapi_files', [])
     if openapi_files:
         logger_nodes.info(f"Processing {len(openapi_files)} OpenAPI/Swagger files...")
         for spec_file_path in openapi_files:

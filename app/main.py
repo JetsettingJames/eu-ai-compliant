@@ -1,5 +1,5 @@
-from fastapi import FastAPI, HTTPException, Depends, Query, BackgroundTasks
-from .models import RepoInputModel, ScanResultModel, ScanGraphState, APIScanResponse, ScanRecordResponse, TaskStatusResponse, TaskSubmitResponse # Import models
+from fastapi import FastAPI, HTTPException, Depends, Query, BackgroundTasks, WebSocket, Request # Added WebSocket
+from .models import RepoInputModel, ScanResultModel, ScanGraphState, APIScanResponse, ScanRecordResponse, TaskStatusResponse, TaskSubmitResponse, ScanInitiatedResponse # Import models
 from .config import settings # Assuming config.py is in the same directory
 from .logger import get_logger # Assuming logger.py is in the same directory
 from .scanner import scan_repo # We will create scanner.py next
@@ -10,6 +10,10 @@ from app.db.session import get_db, engine # Import get_db and engine
 from app.db.base_class import Base # Import Base class for SQLAlchemy models
 from sqlalchemy.ext.asyncio import AsyncSession # Import AsyncSession
 from app.crud.crud_scan_record import get_scan_records_by_repo_url, get_all_scan_records, get_scan_record, get_scan_count_by_risk_tier # Import CRUD functions
+from app.websocket_manager import ConnectionManager # Assuming ConnectionManager is here
+import uuid # For generating scan IDs
+import json # For serializing messages for WebSocket
+from datetime import datetime # Added import for datetime
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -20,6 +24,9 @@ app = FastAPI(
 logger = get_logger(__name__)
 # Ensure logger level is set based on config
 logger.setLevel(settings.LOG_LEVEL)
+
+# --- WebSocket Connection Manager --- #
+manager = ConnectionManager() # Instantiate the connection manager
 
 # --- Database Initialization Function --- #
 async def create_db_and_tables():
@@ -51,6 +58,84 @@ async def shutdown_event():
     logger.info("Application shutdown...")
     # Clean up resources, like database connections
 
+# Helper function to run the graph scan in the background
+async def _run_graph_scan_task(
+    scan_id: str,
+    repo_input: RepoInputModel,
+    graph_orchestrator: Any, # Renamed from 'graph' to avoid conflict with langgraph's graph object
+    db: AsyncSession,
+    ws_manager: ConnectionManager
+):
+    logger.info(f"[ScanID: {scan_id}] Background graph scan task started for: {repo_input.repo_url or repo_input.repo_details}")
+    final_response_data = {}
+    try:
+        repo_scan_graph = graph_orchestrator
+        initial_graph_state = ScanGraphState(
+            input_model=repo_input,
+            repo_info=None,
+            # download_path=None, # download_path is not a field in ScanGraphState
+            commit_sha=None, # Added commit_sha initialization
+            temp_repo_path=None, # Added temp_repo_path initialization
+            discovered_files={},
+            file_content_cache={},
+            extracted_markdown_docs=[],
+            parsed_openapi_specs=[],
+            doc_summary=None,
+            code_ast_analysis_results={},
+            grep_search_results=[],
+            aggregated_code_signals=None,
+            risk_tier=None,
+            repository_files_for_embedding=[],
+            embedding_upsert_status={},
+            fuzzy_matches=[],
+            checklist=None,
+            final_api_response=None,
+            persistence_data=None,
+            persisted_record_id=None,
+            db_session=db,
+            error_messages=[]
+        )
+
+        final_state_values = await repo_scan_graph.ainvoke(initial_graph_state.model_dump(exclude_none=False, exclude_unset=False, exclude=None))
+
+        if isinstance(final_state_values, dict):
+            final_state = ScanGraphState(**final_state_values)
+        elif isinstance(final_state_values, ScanGraphState):
+            final_state = final_state_values
+        else:
+            logger.error(f"[ScanID: {scan_id}] Unexpected final state type from graph: {type(final_state_values)}")
+            # Prepare an error response to send over WebSocket
+            final_response_data = APIScanResponse(
+                error_messages=["Graph execution resulted in an unexpected state type."]
+            ).model_dump()
+            await ws_manager.send_progress(scan_id, {"status": "error", "data": final_response_data})
+            return
+
+        logger.info(f"[ScanID: {scan_id}] Final state from graph: {final_state.model_dump_json(indent=2)}")
+
+        if final_state.final_api_response:
+            logger.info(f"[ScanID: {scan_id}] Graph execution complete. Preparing final API response for WebSocket.")
+            final_response_data = final_state.final_api_response.model_dump()
+            await ws_manager.send_progress(scan_id, {"status": "completed", "data": final_response_data})
+        else:
+            logger.error(f"[ScanID: {scan_id}] Graph execution completed, but no final_api_response was set.")
+            final_response_data = APIScanResponse(
+                error_messages=["Internal server error: Failed to generate final response."] + (final_state.error_messages or [])
+            ).model_dump()
+            await ws_manager.send_progress(scan_id, {"status": "error", "data": final_response_data})
+
+    except Exception as e:
+        logger.error(f"[ScanID: {scan_id}] An unexpected error occurred during background graph scan: {str(e)}", exc_info=True)
+        final_response_data = APIScanResponse(
+            error_messages=[f"Internal server error during graph scan: {str(e)}"]
+        ).model_dump()
+        await ws_manager.send_progress(scan_id, {"status": "error", "data": final_response_data})
+    finally:
+        logger.info(f"[ScanID: {scan_id}] Background graph scan task finished.")
+        # Optionally, close the specific WebSocket connection if it's managed per scan_id
+        # await ws_manager.disconnect_scan_id(scan_id) # Example if such a method exists
+
+
 @app.post(f"{settings.API_V1_STR}/scan", response_model=ScanResultModel)
 async def trigger_scan_repository(input_data: RepoInputModel):
     """
@@ -76,75 +161,37 @@ async def trigger_scan_repository(input_data: RepoInputModel):
         logger.error(f"An unexpected error occurred during scan: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post(f"{settings.API_V1_STR}/graph-scan", response_model=APIScanResponse)
+@app.post(f"{settings.API_V1_STR}/graph-scan", response_model=ScanInitiatedResponse) # Changed response_model
 async def trigger_graph_scan_repository(
     repo_input: RepoInputModel,
-    graph: Any = Depends(get_graph_orchestrator), 
-    db: AsyncSession = Depends(get_db) 
-) -> APIScanResponse:
-    logger.info(f"Triggering graph scan for: {repo_input.repo_url or repo_input.repo_details}")
+    background_tasks: BackgroundTasks, # Added BackgroundTasks
+    graph_orchestrator: Any = Depends(get_graph_orchestrator), # Renamed 'graph' to 'graph_orchestrator'
+    db: AsyncSession = Depends(get_db),
+    # ws_manager: ConnectionManager = Depends(get_connection_manager) # Or use global 'manager'
+) -> ScanInitiatedResponse:
+    scan_id = str(uuid.uuid4())
+    websocket_url = f"/ws/scan_progress/{scan_id}"
+    logger.info(f"[ScanID: {scan_id}] Triggering graph scan for: {repo_input.repo_url or repo_input.repo_details}. WebSocket URL: {websocket_url}")
 
-    try:
-        # Get the compiled graph
-        repo_scan_graph = graph
-        
-        # Initialize the graph state
-        initial_graph_state = ScanGraphState(
-            input_model=repo_input,
-            repo_info=None,
-            download_path=None,
-            documentation_files=[],
-            extracted_doc_content=None,
-            doc_summary=None,
-            code_analysis_results=None,
-            aggregated_code_signals=None,
-            risk_tier=None,
-            checklist=None,
-            final_api_response=None,
-            persistence_data=None,
-            persisted_record_id=None,
-            db_session=db, 
-            error_messages=[]
-        )
-        
-        # Invoke the graph. The input is a dictionary where keys correspond to ScanGraphState fields.
-        # For the initial call, we provide the whole initial state.
-        # Subsequent node outputs will be merged into the state by LangGraph.
-        # Use exclude_none=False and exclude_unset=False to include all fields, even those marked with exclude=True
-        final_state_values = await repo_scan_graph.ainvoke(initial_graph_state.model_dump(exclude_none=False, exclude_unset=False, exclude=None))
-        
-        # The result from ainvoke will be the full state dictionary. We can re-validate it into our Pydantic model.
-        # However, for StatefulGraph, the final_state *is* the ScanGraphState object itself if properly handled.
-        # LangGraph's ainvoke with StatefulGraph typically returns the final state object or dict.
-        # Let's assume it returns a dict that can be parsed into ScanGraphState for safety.
-        if isinstance(final_state_values, dict):
-            final_state = ScanGraphState(**final_state_values)
-        elif isinstance(final_state_values, ScanGraphState):
-            final_state = final_state_values # If ainvoke already returns the Pydantic model instance
-        else:
-            logger.error(f"Unexpected final state type from graph: {type(final_state_values)}")
-            raise HTTPException(status_code=500, detail="Graph execution resulted in an unexpected state type.")
+    # Add the graph scan execution to background tasks
+    background_tasks.add_task(
+        _run_graph_scan_task,
+        scan_id,
+        repo_input,
+        graph_orchestrator,
+        db,
+        manager # Using the global manager instance
+    )
 
-        # Log the entire final_state for debugging
-        logger.info(f"Final state from graph: {final_state.model_dump_json(indent=2)}")
+    return ScanInitiatedResponse(
+        scan_id=scan_id,
+        message="Scan initiated. Connect to WebSocket for progress.",
+        websocket_url=websocket_url
+    )
 
-        if final_state.final_api_response:
-            logger.info("Graph execution complete. Returning final API response.")
-            return final_state.final_api_response
-        else:
-            # This case should ideally not be reached if prepare_final_response_node always runs
-            logger.error("Graph execution completed, but no final_api_response was set in the state.")
-            # Construct a fallback error response
-            return APIScanResponse(
-                error_messages=["Internal server error: Failed to generate final response."] + (final_state.error_messages or [])
-            )
-
-    except Exception as e:
-        logger.error(f"An unexpected error occurred during graph scan: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal server error during graph scan: {str(e)}")
 
 # A simple root endpoint for health check or basic info
-@app.get("/")
+@app.get("/", tags=["General"])
 async def read_root():
     logger.info("Root endpoint accessed.")
     return {"message": f"Welcome to {settings.APP_NAME}"}
@@ -248,6 +295,26 @@ async def get_scan_statistics(
     except Exception as e:
         logger.error(f"Error retrieving scan statistics: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve scan statistics: {str(e)}")
+
+# WebSocket endpoint for scan progress
+@app.websocket("/ws/scan_progress/{scan_id}")
+async def websocket_endpoint(websocket: WebSocket, scan_id: str):
+    await manager.connect(websocket, scan_id)  # Corrected order: websocket, then scan_id
+    logger.info(f"Client connected to WebSocket for scan_id: {scan_id}")
+    try:
+        while True:
+            # Keep the connection alive, or handle client messages if any
+            data = await websocket.receive_text() 
+            logger.info(f"[WS ScanID: {scan_id}] Received from client: {data}")
+            # Echo back or process client message if needed
+            # await manager.send_personal_message(f"Echo: {data}", websocket)
+    except WebSocketDisconnect:
+        logger.info(f"Client disconnected from WebSocket for scan_id: {scan_id}")
+        manager.disconnect(scan_id, websocket)
+    except Exception as e:
+        logger.error(f"Error in WebSocket for scan_id {scan_id}: {e}", exc_info=True)
+        manager.disconnect(scan_id, websocket)
+
 
 # To run this app:
 # Ensure you are in the project root directory

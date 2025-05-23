@@ -526,14 +526,18 @@ async def scan_repo(input_data: RepoInputModel, scan_id: Optional[str] = None, w
 
         # Step 3: Summarise with LLM
         logger.info("Step 3: Summarising documentation with LLM...")
-        doc_summary_bullets: List[str] = []
-        if llm_service.is_openai_configured():
-            doc_summary_bullets = await llm_service.summarize_documentation(
-                full_text=combined_markdown_text,
-                headings=all_headings,
-                openapi_summaries=openapi_specs_summary
-            )
-            logger.info(f"LLM summarization complete. Bullets: {len(doc_summary_bullets)}")
+        doc_summary_bullets: Optional[List[str]] = None
+        if llm_service.aclient: # Check if the aclient is initialized (i.e., API key was provided)
+            logger.info("LLM service is configured. Proceeding with documentation summary.")
+            try:
+                # Use run_in_threadpool for the potentially blocking LLM call
+                doc_summary_bullets = await llm_service.get_llm_summary( # Renamed from summarize_documentation
+                    markdown_text=combined_markdown_text,
+                    headings=all_headings,
+                )
+                logger.info(f"LLM summarization complete. Bullets: {len(doc_summary_bullets)}")
+            except Exception as e:
+                logger.error(f"Error during LLM summarization: {e}")
         else:
             if not combined_markdown_text and not openapi_specs_summary:
                 doc_summary_bullets = ["Warning: No significant documentation found and LLM summarization skipped (API key missing)."]
@@ -629,7 +633,7 @@ async def scan_repo(input_data: RepoInputModel, scan_id: Optional[str] = None, w
         logger.info(f"Found {len(grep_signals_found)} grep signals.")
 
         # --- Vector-Assisted Fuzzy Classification Steps (Refactored for ChromaDB) ---
-        if llm_service.is_openai_configured() and full_obligations_data:
+        if llm_service.aclient and full_obligations_data:
             if repo_files_for_embedding:
                 logger.info("Upserting repository documents to ChromaDB...")
                 repo_doc_ids = await upsert_repository_documents(repo_files_for_embedding)
