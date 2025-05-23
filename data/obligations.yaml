@@ -1,0 +1,219 @@
+# EU AI Act Compliance Obligations Checklist
+# Based on comprehensive list provided by user.
+
+general:
+  overall_tier_keywords:
+    - "general compliance"
+    - "basic requirements"
+    - "minimal risk"
+    - "standard practices"
+  obligations:
+    - id: GEN_REPO_01
+      title: "README.md: System overview, purpose, design, data, users."
+      deadline: "Ongoing / Before public use"
+      ref: "Evidently AI"
+      keywords: ["readme", "documentation", "overview", "system purpose"]
+      category: "repository_governance"
+    - id: GEN_REPO_02
+      title: "LICENSE File: OSI-approved license for reuse and liabilities."
+      deadline: "Ongoing / Before public use"
+      ref: "cloud.gov"
+      keywords: ["license", "osi", "open source", "liability"]
+      category: "repository_governance"
+    - id: GEN_REPO_03
+      title: "CONTRIBUTING.md & CODE_OF_CONDUCT.md: Contribution guidelines and community safety."
+      deadline: "Ongoing"
+      ref: "Wikipedia (Contributing guidelines)"
+      keywords: ["contributing", "code of conduct", "community", "guidelines"]
+      category: "repository_governance"
+    - id: GEN_REPO_04
+      title: "SECURITY.md: Vulnerability reporting, disclosure policies, scan badges."
+      deadline: "Ongoing"
+      ref: "GitProtect"
+      keywords: ["security", "vulnerability", "disclosure", "reporting"]
+      category: "repository_governance"
+    - id: GEN_REPO_05
+      title: "Branch Protection & Audit Logs: Enforce rules, status checks, code reviews; enable audit logs."
+      deadline: "Ongoing"
+      ref: "wellarchitected.github.com (Governance Checklist)"
+      keywords: ["branch protection", "audit logs", "code review", "status checks"]
+      category: "repository_governance"
+    - id: GEN_SEC_01
+      title: "Two-Factor Authentication (2FA): Mandate for all collaborators."
+      deadline: "Immediate"
+      ref: "Reco"
+      keywords: ["2fa", "two-factor", "authentication", "security"]
+      category: "security_practices"
+    - id: GEN_SEC_02
+      title: "Secrets Scanning & Management: Automate scanning, use env vars/vaults, no hardcoded keys."
+      deadline: "Ongoing"
+      ref: "arXiv (Secret Management Practices)"
+      keywords: ["secrets", "scanning", "vault", "hardcoded", "keys"]
+      category: "security_practices"
+    - id: GEN_SEC_03
+      title: "Dependency Checks: Run Dependabot or similar for vulnerable packages."
+      deadline: "Ongoing / Per PR"
+      ref: "wellarchitected.github.com (Governance Checklist)"
+      keywords: ["dependency", "dependabot", "vulnerable", "packages"]
+      category: "security_practices"
+    - id: GEN_SEC_04
+      title: "CI-based Compliance Gates: Automate checks for conventions, licenses, LLM usage."
+      deadline: "Ongoing"
+      ref: "wellarchitected.github.com (Rulesets Best Practices)"
+      keywords: ["ci", "compliance", "gates", "automation"]
+      category: "security_practices"
+    - id: GEN_DP_01
+      title: "Privacy Notice & GDPR Alignment: Policy for data subject rights if processing personal data."
+      deadline: "If processing personal data"
+      ref: "winder.ai (EU AI Act Summary)"
+      keywords: ["privacy", "gdpr", "data subject", "rights"]
+      category: "data_protection_gdpr"
+    - id: GEN_REG_01
+      title: "Prohibitions (Art. 5) Apply: Note deadline 2 Feb 2025."
+      deadline: "Awareness / By 2 Feb 2025 for relevant systems"
+      ref: "artificialintelligenceact.eu (Responsibilities)"
+      keywords: ["prohibitions", "article 5", "deadline", "2025"]
+      category: "regulatory_milestones"
+    - id: GEN_REG_02
+      title: "Full High-Risk Obligations Begin: Note deadline 2 Aug 2026."
+      deadline: "Awareness / By 2 Aug 2026 for high-risk systems"
+      ref: "artificialintelligenceact.eu (Responsibilities)"
+      keywords: ["high-risk", "obligations", "deadline", "2026"]
+      category: "regulatory_milestones"
+    - id: GEN_REG_03
+      title: "Code of Practice Adoption: Ensure adoption by 2 May 2025 if applicable."
+      deadline: "Awareness / By 2 May 2025"
+      ref: "artificialintelligenceact.eu (Code of Practice)"
+      keywords: ["code of practice", "adoption", "2025"]
+      category: "regulatory_milestones"
+    - id: GEN_REG_04
+      title: "Sandbox Participation: Register by 2 Aug 2026 if applicable."
+      deadline: "Awareness / By 2 Aug 2026 if participating"
+      ref: "artificialintelligenceact.eu (Implementation Next Steps)"
+      keywords: ["sandbox", "participation", "register", "2026"]
+      category: "regulatory_milestones"
+    - id: GEN_CI_01
+      title: "Automated Weekly Scans: Re-scan repo on commits to detect drift."
+      deadline: "Ongoing"
+      ref: "User requirement for RepoScanner"
+      keywords: ["automated", "scans", "weekly", "drift"]
+      category: "continuous_improvement"
+    - id: GEN_CI_02
+      title: "Monthly Stakeholder Review: Present compliance dashboard/metrics."
+      deadline: "Monthly"
+      ref: "User requirement / Best practice"
+      keywords: ["monthly", "stakeholder", "review", "dashboard"]
+      category: "continuous_improvement"
+    - id: GEN_CI_03
+      title: "Annual Third-Party Audit: Plan for external assessment, especially if high-risk."
+      deadline: "Annually (if high-risk)"
+      ref: "Securiti (Article 43)"
+      keywords: ["annual", "audit", "third-party", "assessment"]
+      category: "continuous_improvement"
+
+limited:
+  overall_tier_keywords:
+    - "limited risk"
+    - "transparency obligations"
+    - "disclosure requirements"
+    - "emotion recognition"
+    - "general purpose ai"
+    - "gpai"
+    - "llm"
+  obligations:
+    - id: LIM_GPAI_01
+      title: "Model Card for General-Purpose AI (Art. 52): Publish card with purpose, metrics, datasets, limitations."
+      deadline: "Before placing GPAI model on market / making it available"
+      ref: "EU AI Act, Art. 52 (Guidance: CERRE)"
+      keywords: ["model card", "general-purpose ai", "gpai", "article 52", "transparency"]
+      category: "gpai_model_card"
+
+high:
+  overall_tier_keywords:
+    - "high risk"
+    - "critical infrastructure"
+    - "biometric identification"
+    - "law enforcement"
+    - "employment decisions"
+    - "education assessment"
+    - "credit scoring"
+    - "justice administration"
+  obligations:
+    - id: HIGH_TECHDOC_01
+      title: "Technical Documentation (Art. 11): Detailed spec - architecture, algorithms, data, training, validation."
+      deadline: "Before placing on market / putting into service"
+      ref: "EU AI Act, Art. 11 (Guidance: Evidently AI)"
+      keywords: ["technical documentation", "article 11", "architecture", "algorithms", "training"]
+      category: "technical_documentation"
+    - id: HIGH_TRANS_01
+      title: "Transparency Statements (Art. 13): Explain output interpretation, human-in-the-loop, stop mechanisms."
+      deadline: "Before placing on market / putting into service"
+      ref: "EU AI Act, Art. 13 (Guidance: Evidently AI)"
+      keywords: ["transparency", "article 13", "output interpretation", "human-in-the-loop"]
+      category: "transparency_information"
+    - id: HIGH_RISK_01
+      title: "Risk-Management System (Art. 9): Document policies for identifying, evaluating, mitigating risks."
+      deadline: "Before placing on market / putting into service; updated throughout lifecycle"
+      ref: "EU AI Act, Art. 9 (Guidance: Securiti)"
+      keywords: ["risk management", "article 9", "risk mitigation", "evaluation"]
+      category: "risk_management_system"
+    - id: HIGH_DATA_01
+      title: "Data Governance & Bias Testing (Art. 10): Scripts and reports on bias-mitigation and data quality."
+      deadline: "Throughout development and lifecycle"
+      ref: "EU AI Act, Art. 10 (Guidance: Securiti)"
+      keywords: ["data governance", "bias testing", "article 10", "data quality"]
+      category: "data_governance_bias"
+    - id: HIGH_LOG_01
+      title: "Logging & Monitoring (Art. 12 for HRAI logging): Immutable logs of inputs, outputs, critical events."
+      deadline: "Designed in; active during operation"
+      ref: "EU AI Act, Art. 12 (Guidance: Securiti for Art. 61 general concept)"
+      keywords: ["logging", "monitoring", "article 12", "immutable logs"]
+      category: "logging_capabilities"
+    - id: HIGH_HO_01
+      title: "Human Oversight Protocols (Art. 14): Instructions for human reviewers to intervene or halt model."
+      deadline: "Designed in; available during operation"
+      ref: "EU AI Act, Art. 14 (Guidance: Evidently AI)"
+      keywords: ["human oversight", "article 14", "intervention", "halt model"]
+      category: "human_oversight_design"
+    - id: HIGH_CONF_01
+      title: "Conformity Assessment Report (Art. 43): Archive evidence of internal/third-party assessment."
+      deadline: "Before placing on market / putting into service"
+      ref: "EU AI Act, Art. 43 (Guidance: Securiti)"
+      keywords: ["conformity assessment", "article 43", "third-party", "evidence"]
+      category: "conformity_assessment_procedure"
+    - id: HIGH_CONF_02
+      title: "EU Declaration of Conformity (Art. 47): Signed declaration system meets AI Act requirements."
+      deadline: "Before placing on market / putting into service"
+      ref: "EU AI Act, Art. 47 (Guidance: DataGuard)"
+      keywords: ["declaration of conformity", "article 47", "signed declaration"]
+      category: "conformity_assessment_procedure"
+    - id: HIGH_CONF_03
+      title: "CE Marking / UKCA Mark: Evidence of affixed mark if AI is safety component in regulated product."
+      deadline: "Before placing on market (if applicable)"
+      ref: "DataGuard"
+      keywords: ["ce marking", "ukca mark", "safety component", "regulated product"]
+      category: "conformity_assessment_procedure"
+    - id: HIGH_REG_01
+      title: "EU AI Database Registration (Art. 49 for HRAI): Confirm provider and system registration."
+      deadline: "Before placing on market / putting into service"
+      ref: "EU AI Act, Art. 49 (Guidance: DataGuard)"
+      keywords: ["eu ai database", "registration", "article 49", "provider registration"]
+      category: "eu_database_registration"
+
+prohibited:
+  overall_tier_keywords:
+    - "prohibited"
+    - "social scoring"
+    - "subliminal manipulation"
+    - "vulnerable group exploitation"
+    - "real-time biometric identification"
+    - "public spaces"
+    - "emotion recognition workplace"
+    - "predictive policing"
+  obligations:
+    - id: PROHIBIT_01
+      title: "Adherence to Prohibitions (Art. 5): Ensure system does not fall under prohibited AI practices."
+      deadline: "Ongoing / Compliance by 2 Feb 2025"
+      ref: "EU AI Act, Art. 5 (Deadline: artificialintelligenceact.eu)"
+      keywords: ["prohibitions", "article 5", "prohibited practices", "compliance"]
+      category: "system_prohibitions"

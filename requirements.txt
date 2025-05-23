@@ -1,0 +1,39 @@
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+pydantic>=2.0.0
+httpx>=0.24.0
+PyYAML>=6.0
+openai>=1.3.0
+python-dotenv==1.0.0
+SQLAlchemy[asyncio]==2.0.29 # Added for database interaction, with asyncio support
+asyncpg==0.29.0 # PostgreSQL async driver
+psycopg2-binary==2.9.9 # PostgreSQL adapter for Python
+alembic==1.13.1 # Database migration tool
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
+pytest-httpx==0.35.0 # Updated from 0.21.0
+pytest-mock>=3.0.0 # For mocker fixture
+markdown-it-py==3.0.0
+beautifulsoup4==4.12.3
+pydantic-settings>=2.0.0
+typing-extensions==4.13.0 # Explicitly add/update for openai compatibility
+numpy==1.26.4
+scikit-learn==1.4.2
+requests>=2.31.0 # For downloading repository archives
+
+# Langchain and Vector Store
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-chroma>=0.1.0
+chromadb>=0.4.0
+
+# LangGraph
+langgraph>=0.0.30
+
+# Database
+aiosqlite==0.20.0 # For async SQLite
+
+# Performance Optimization
+redis==5.0.1 # Redis client for Python
+celery==5.3.6 # Distributed task queue
+flower==2.0.1 # Celery monitoring tool

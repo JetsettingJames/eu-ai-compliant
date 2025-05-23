@@ -1,0 +1,107 @@
+# EU AI Act Compliance Configuration
+# General settings and configurations for EU AI Act compliance
+
+# Application compliance settings
+application:
+  name: "EU AI Act Compliance Assistant - RepoScanner"
+  version: "1.0.0"
+  compliance_version: "EU AI Act 2024"
+  last_updated: "2025-05-23"
+
+# Compliance assessment settings
+assessment:
+  # Default confidence threshold for LLM-based risk classification
+  confidence_threshold: 0.8
+  
+  # Signals that indicate potential high-risk classification
+  high_risk_signals:
+    - biometric_identification
+    - real_time_monitoring
+    - critical_infrastructure
+    - law_enforcement
+    - migration_border_control
+    - employment_decisions
+    - education_assessment
+    - credit_scoring
+    - justice_administration
+    - democratic_processes
+  
+  # Signals that indicate potential prohibited classification
+  prohibited_signals:
+    - social_scoring
+    - subliminal_manipulation
+    - vulnerable_group_exploitation
+    - real_time_biometric_identification_public_spaces
+    - emotion_recognition_workplace
+    - predictive_policing
+  
+  # Libraries and keywords that indicate specific AI capabilities
+  signal_libraries:
+    biometric:
+      - "face_recognition"
+      - "opencv-python"
+      - "deepface"
+      - "facial-recognition"
+      - "fingerprint-recognition"
+      - "iris-recognition"
+      - "voice-recognition"
+    
+    real_time_stream:
+      - "opencv-python"
+      - "streamlit"
+      - "flask-socketio"
+      - "django-channels"
+      - "websockets"
+      - "socket.io"
+    
+    gpai:
+      - "openai"
+      - "langchain"
+      - "huggingface_hub"
+      - "transformers"
+      - "llama-cpp-python"
+      - "anthropic"
+      - "cohere"
+      - "mistralai"
+      - "ollama"
+
+# Documentation requirements by risk tier
+documentation_requirements:
+  prohibited:
+    - "Prohibited Use Statement"
+    - "Legal Justification (if exception applies)"
+    - "Risk Assessment Report"
+    - "Mitigation Measures"
+  
+  high:
+    - "Technical Documentation"
+    - "Risk Management System"
+    - "Data Governance Documentation"
+    - "Human Oversight Measures"
+    - "Logging Capabilities"
+    - "Conformity Assessment"
+    - "EU Declaration of Conformity"
+    - "EU Database Registration"
+  
+  limited:
+    - "Transparency Information"
+    - "Model Card (for GPAI)"
+    - "Content Generation Disclosure"
+  
+  minimal:
+    - "Voluntary Code of Conduct"
+    - "Basic Documentation"
+
+# Regulatory deadlines
+regulatory_deadlines:
+  prohibitions: "2025-02-02"
+  high_risk_obligations: "2026-08-02"
+  transparency_obligations: "2025-08-02"
+  codes_of_practice: "2025-05-02"
+  sandboxes: "2026-08-02"
+
+# Compliance monitoring settings
+monitoring:
+  scan_frequency: "weekly"
+  review_frequency: "monthly"
+  audit_frequency: "annually"

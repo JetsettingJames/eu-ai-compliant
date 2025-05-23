@@ -1,0 +1,60 @@
+# EU AI Act Risk Tiers Configuration
+# This file defines the risk tiers as specified in the EU AI Act
+
+risk_tiers:
+  prohibited:
+    name: "Prohibited"
+    description: "AI systems that are explicitly prohibited under Article 5 of the EU AI Act"
+    examples:
+      - "Social scoring systems used by public authorities"
+      - "Biometric identification systems in publicly accessible spaces for law enforcement"
+      - "Emotion recognition in workplace/educational settings"
+      - "AI systems that manipulate human behavior to circumvent free will"
+    legal_reference: "EU AI Act, Article 5"
+    compliance_deadline: "2025-02-02"
+    
+  high:
+    name: "High Risk"
+    description: "AI systems that pose significant risks to health, safety, or fundamental rights"
+    examples:
+      - "Critical infrastructure management (e.g., water, gas, electricity)"
+      - "Educational or vocational training systems"
+      - "Employment, worker management, and access to self-employment"
+      - "Essential private and public services (e.g., credit scoring)"
+      - "Law enforcement systems"
+      - "Migration, asylum, and border control management"
+      - "Administration of justice and democratic processes"
+    legal_reference: "EU AI Act, Article 6 and Annex III"
+    compliance_deadline: "2026-08-02"
+    
+  limited:
+    name: "Limited Risk"
+    description: "AI systems with specific transparency obligations"
+    examples:
+      - "Chatbots and virtual assistants"
+      - "Emotion recognition systems"
+      - "Biometric categorization systems"
+      - "Content generation systems (deepfakes)"
+      - "General Purpose AI Systems (GPAI)"
+    legal_reference: "EU AI Act, Articles 50-55"
+    compliance_deadline: "2025-08-02"
+    
+  minimal:
+    name: "Minimal Risk"
+    description: "AI systems that pose minimal or no risk to citizens' rights or safety"
+    examples:
+      - "AI-enabled video games"
+      - "Spam filters"
+      - "Basic recommendation systems"
+      - "Inventory management systems"
+    legal_reference: "EU AI Act, Recital 69"
+    compliance_deadline: "N/A (Voluntary codes of conduct encouraged)"
+    
+  unknown:
+    name: "Unknown"
+    description: "Systems where risk classification is pending or cannot be determined"
+    examples:
+      - "Systems under development with unclear use cases"
+      - "Systems with insufficient documentation for classification"
+    legal_reference: "N/A"
+    compliance_deadline: "N/A (Requires further assessment)"
