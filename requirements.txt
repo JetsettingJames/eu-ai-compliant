@@ -41,8 +41,9 @@ flower==2.0.1 # Celery monitoring tool
 # Benchmarking and Performance Testing
 matplotlib>=3.7.0 # For generating performance plots
 pandas>=2.0.0 # For data manipulation and analysis
-tracemalloc # For memory profiling (part of standard library)
-statistics # For statistical calculations (part of standard library)
 pytest-benchmark>=4.0.0 # For pytest benchmarking
 memory-profiler>=0.61.0 # For detailed memory profiling
 psutil>=5.9.0 # For system utilization monitoring
+
+# Code Analysis
+radon>=5.1.0 # For code complexity metrics

@@ -1,0 +1,100 @@
+[
+  {
+    "id": "MIN-001",
+    "title": "Voluntary Codes of Conduct",
+    "description": "Consider adhering to voluntary codes of conduct for minimal risk AI systems.",
+    "category": "BestPractice",
+    "tier_relevance": ["minimal"]
+  },
+  {
+    "id": "MIN-002",
+    "title": "General Software Best Practices",
+    "description": "Apply standard software development best practices, including security and quality assurance.",
+    "category": "BestPractice",
+    "tier_relevance": ["minimal"]
+  },
+  {
+    "id": "DG-001",
+    "title": "Data Governance Practices Documented",
+    "description": "Are there documented data governance and management practices for training, validation, and testing datasets? (Ref: EU AI Act, Art. 10.2)",
+    "category": "Documentation",
+    "tier_relevance": ["high", "limited"]
+  },
+  {
+    "id": "DG-002",
+    "title": "Dataset Relevance & Quality Assessed",
+    "description": "Is there evidence that datasets are relevant, representative, free of errors, and complete for the system's intended purpose? (Ref: EU AI Act, Art. 10.3)",
+    "category": "DataHandling",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "DG-003",
+    "title": "Bias Examination & Mitigation Processes",
+    "description": "Is there evidence of processes to examine and mitigate possible biases in datasets? (Ref: EU AI Act, Art. 10.3, 10.4)",
+    "category": "Ethics",
+    "tier_relevance": ["high", "limited"]
+  },
+  {
+    "id": "DG-004",
+    "title": "Data Processing Operations Documented",
+    "description": "Are data processing operations (collection, labelling, cleaning, enrichment) documented? (Ref: EU AI Act, Art. 10.2, 10.3)",
+    "category": "Documentation",
+    "tier_relevance": ["high", "limited"]
+  },
+  {
+    "id": "TR-001",
+    "title": "User Information on AI Interaction",
+    "description": "Are users clearly informed when they are interacting with an AI system, especially if there's a risk of confusion with human interaction? (Ref: EU AI Act, Art. 13/52)",
+    "category": "Transparency",
+    "tier_relevance": ["high", "limited"]
+  },
+  {
+    "id": "TR-002",
+    "title": "Information on Intended Purpose & Capabilities",
+    "description": "Is clear information provided to users about the AI system's intended purpose, capabilities, and limitations? (Ref: EU AI Act, Art. 13.3a, 13.3b)",
+    "category": "Transparency",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "TR-003",
+    "title": "Information on Accuracy & Risks",
+    "description": "Are users informed about the system's level of accuracy and any known or foreseeable risks associated with its use or misuse? (Ref: EU AI Act, Art. 13.3c, 13.3d)",
+    "category": "Transparency",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "TR-004",
+    "title": "Instructions for Use Provided",
+    "description": "Are clear and adequate instructions for use provided to the user, including information on how to interpret outputs and potential risks of misinterpretation? (Ref: EU AI Act, Art. 13.3g, 13.4)",
+    "category": "Documentation",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "HO-001",
+    "title": "Design for Effective Oversight",
+    "description": "Is the AI system designed and developed to enable effective human oversight, including appropriate human-machine interface tools? (Ref: EU AI Act, Art. 14.1, 14.2)",
+    "category": "Human Oversight",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "HO-002",
+    "title": "Information for Overseers",
+    "description": "Are individuals assigned to human oversight provided with adequate information and tools to understand the system's capabilities, limitations, and monitor its operation effectively? (Ref: EU AI Act, Art. 14.3, 14.4a, 14.4b)",
+    "category": "Human Oversight",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "HO-003",
+    "title": "Intervention Capabilities",
+    "description": "Does the system allow human overseers to intervene in its operation, decide not to use the system in particular situations, or override its decisions? (Ref: EU AI Act, Art. 14.3c, 14.4c, 14.4d)",
+    "category": "Human Oversight",
+    "tier_relevance": ["high"]
+  },
+  {
+    "id": "HO-004",
+    "title": "Oversight Measures Documented",
+    "description": "Are the human oversight measures, including their implementation and any specific training for overseers, documented?",
+    "category": "Documentation",
+    "tier_relevance": ["high"]
+  }
+]

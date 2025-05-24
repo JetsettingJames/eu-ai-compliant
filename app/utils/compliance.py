@@ -7,7 +7,7 @@ All compliance jargon and configuration is loaded from YAML files.
 """
 import logging
 from typing import Dict, Any, List, Optional
-from app.models import ChecklistItem, CodeSignal, GrepSignalItem, RiskTier
+from app.models import ComplianceChecklistItem, CodeSignal, GrepSignalItem, RiskTier
 from app.utils.yaml_config import (
     get_obligations,
     get_obligations_for_tier,
@@ -19,7 +19,7 @@ from app.utils.yaml_config import (
 logger = logging.getLogger(__name__)
 
 
-def load_and_get_checklist_for_tier(tier: str, obligations_data: Optional[Dict[str, Any]] = None) -> List[ChecklistItem]:
+def load_and_get_checklist_for_tier(tier: str, obligations_data: Optional[Dict[str, Any]] = None) -> List[ComplianceChecklistItem]:
     """
     Loads compliance checklist items for a specific risk tier from the YAML file.
     
@@ -28,7 +28,7 @@ def load_and_get_checklist_for_tier(tier: str, obligations_data: Optional[Dict[s
         obligations_data: Optional pre-loaded obligations data
         
     Returns:
-        List of ChecklistItem objects for the specified tier
+        List of ComplianceChecklistItem objects for the specified tier
     """
     logger.info(f"Loading checklist items for tier: {tier}")
     
@@ -53,7 +53,7 @@ def load_and_get_checklist_for_tier(tier: str, obligations_data: Optional[Dict[s
     # Process each obligation in the tier
     for obligation in obligations:
         try:
-            checklist_item = ChecklistItem(
+            checklist_item = ComplianceChecklistItem(
                 id=obligation.get("id", ""),
                 title=obligation.get("title", ""),
                 description=obligation.get("title", ""),  # Use title as description if not provided

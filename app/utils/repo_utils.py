@@ -10,6 +10,7 @@ import zipfile
 import requests
 import logging
 from typing import Dict, Any, List, Optional, Tuple
+from ..models import RepoInfo
 from urllib.parse import urlparse
 import httpx
 
@@ -80,43 +81,65 @@ async def fetch_github_repo_branch_info(owner: str, repo_name: str, branch_name:
             logger.error(f"Unexpected error fetching branch details for {owner}/{repo_name}/{actual_branch_name}: {e}")
             raise ValueError(f"Unexpected error fetching branch details for {owner}/{repo_name}/{actual_branch_name}: {e}") from e
 
-def get_repo_archive_info(repo_url: str) -> Dict[str, Any]:
+async def get_repo_archive_info(repo_details_obj: RepoInfo, token: Optional[str]) -> Tuple[str, str, str]:
     """
-    Extract repository information from a GitHub repository URL.
-    
+    Fetches the target branch name (resolving default if necessary), its latest commit SHA,
+    and constructs the archive download URL.
+
     Args:
-        repo_url: GitHub repository URL
-        
+        repo_details_obj: RepoInfo object with owner and repo, and optionally branch.
+        token: GitHub API token.
+
     Returns:
-        Dictionary containing repository information (owner, repo name, etc.)
+        A tuple (archive_url, target_branch_name, commit_sha).
     """
-    logger.info(f"Extracting repository information from URL: {repo_url}")
-    
-    # Parse the URL
-    parsed_url = urlparse(repo_url)
-    path_parts = parsed_url.path.strip('/').split('/')
-    
-    if len(path_parts) < 2:
-        logger.error(f"Invalid repository URL format: {repo_url}")
-        raise ValueError(f"Invalid repository URL format: {repo_url}")
-    
-    owner = path_parts[0]
-    repo_name = path_parts[1]
-    branch = "main"  # Default to main branch
-    
-    # If there's a branch specified in the URL
-    if len(path_parts) > 3 and path_parts[2] == "tree":
-        branch = path_parts[3]
-    
-    archive_url = f"https://github.com/{owner}/{repo_name}/archive/refs/heads/{branch}.zip"
-    
-    return {
-        "owner": owner,
-        "repo_name": repo_name,
-        "branch": branch,
-        "archive_url": archive_url,
-        "full_name": f"{owner}/{repo_name}"
-    }
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
+        # 1. Determine the branch to use (default or specified)
+        target_branch_name = repo_details_obj.branch
+        if not target_branch_name:
+            api_repo_url = f"https://api.github.com/repos/{repo_details_obj.owner}/{repo_details_obj.repo}"
+            logger.info(f"Fetching default branch for {repo_details_obj.owner}/{repo_details_obj.repo} from {api_repo_url}")
+            try:
+                response = await client.get(api_repo_url)
+                response.raise_for_status() # Raise an exception for HTTP errors
+                repo_data = response.json()
+                target_branch_name = repo_data.get("default_branch")
+                if not target_branch_name:
+                    raise ValueError(f"Could not determine default branch for {repo_details_obj.owner}/{repo_details_obj.repo}")
+                logger.info(f"Default branch for {repo_details_obj.owner}/{repo_details_obj.repo} is {target_branch_name}")
+            except httpx.HTTPStatusError as e:
+                logger.error(f"GitHub API error fetching repo details: {e.response.status_code} - {e.response.text}")
+                raise ValueError(f"Failed to fetch repo details for {repo_details_obj.owner}/{repo_details_obj.repo}: {e.response.status_code}") from e
+            except Exception as e:
+                logger.error(f"Error determining default branch: {e}")
+                raise
+
+        # 2. Get the commit SHA for the target branch
+        branch_url = f"https://api.github.com/repos/{repo_details_obj.owner}/{repo_details_obj.repo}/branches/{target_branch_name}"
+        logger.info(f"Fetching commit SHA for branch '{target_branch_name}' from {branch_url}")
+        try:
+            response = await client.get(branch_url)
+            response.raise_for_status()
+            branch_data = response.json()
+            commit_sha = branch_data.get("commit", {}).get("sha")
+            if not commit_sha:
+                raise ValueError(f"Could not determine commit SHA for branch {target_branch_name}")
+            logger.info(f"Commit SHA for {repo_details_obj.owner}/{repo_details_obj.repo}@{target_branch_name} is {commit_sha}")
+            
+            archive_download_url = f"https://github.com/{repo_details_obj.owner}/{repo_details_obj.repo}/archive/{commit_sha}.zip"
+            logger.info(f"Archive download URL for {repo_details_obj.owner}/{repo_details_obj.repo}@{commit_sha} is {archive_download_url}")
+            
+            return archive_download_url, target_branch_name, commit_sha
+        except httpx.HTTPStatusError as e:
+            logger.error(f"GitHub API error fetching branch details: {e.response.status_code} - {e.response.text}")
+            raise ValueError(f"Failed to fetch branch details for {target_branch_name}: {e.response.status_code}") from e
+        except Exception as e:
+            logger.error(f"Error determining commit SHA: {e}")
+            raise
 
 async def download_repo_zip(archive_url: str, token: Optional[str] = None) -> Optional[str]:
     """
@@ -461,3 +484,41 @@ def run_grep_search(repo_dir: str, patterns: List[str]) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Error running grep search: {str(e)}")
         return []
+
+def read_file_content(file_path: str) -> str:
+    """
+    Read and return the content of a file as a string.
+
+    Args:
+        file_path: The absolute path to the file.
+
+    Returns:
+        The content of the file as a string.
+
+    Raises:
+        FileNotFoundError: If the file does not exist.
+        IOError: If an error occurs during file reading.
+    """
+    logger.debug(f"Reading content from file: {file_path}")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return content
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        raise
+    except UnicodeDecodeError as e:
+        logger.warning(f"UnicodeDecodeError reading {file_path}, trying with 'latin-1': {e}")
+        try:
+            with open(file_path, 'r', encoding='latin-1') as f:
+                content = f.read()
+            return content
+        except Exception as e_inner:
+            logger.error(f"Error reading file {file_path} even with latin-1: {e_inner}")
+            raise IOError(f"Could not read file {file_path}: {e_inner}") from e_inner
+    except IOError as e:
+        logger.error(f"IOError reading file {file_path}: {e}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error reading file {file_path}: {e}")
+        raise IOError(f"Unexpected error reading file {file_path}: {e}") from e

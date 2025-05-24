@@ -1,339 +1,667 @@
 # app/graph_nodes.py
 
-from typing import Dict, Any, Optional, List, Tuple
-from .models import RepoInputModel, ScanGraphState, RepoInfo, CodeAnalysisResult, CodeSignal, RiskTier, APIScanResponse, ScanPersistenceData # Import APIScanResponse and ScanPersistenceData
-from .scanner import resolve_repo_input # Assuming resolve_repo_input can be imported
+from typing import Dict, Any, Optional, List, Tuple, Set
+from collections import defaultdict
+from .models import (
+    RepoInputModel, ScanGraphState, RepoInfo,
+    CodeAnalysisResult, CodeSignal, RiskTier, APIScanResponse,
+    ScanPersistenceData, CodeViolationDetail, ComplianceObligation, ComplianceChecklistItem,
+    RepositoryFile, FuzzyMatchResult
+)
+from .scanner import resolve_repo_input
 import tempfile
 import shutil
 import os
 import asyncio
-from .utils import get_repo_archive_info, download_repo_zip, unzip_archive, find_documentation_files, find_code_files, extract_text_and_headings_from_markdown, parse_openapi_file, fetch_github_repo_branch_info # Import fetch_github_repo_branch_info
+import json
+from pathlib import Path
+from .utils import (
+    get_repo_archive_info, download_repo_zip, unzip_archive,
+    find_documentation_files, find_code_files,
+    extract_text_and_headings_from_markdown, parse_openapi_file,
+    fetch_github_repo_branch_info, read_file_content
+)
 from .config import settings
-from .logger import get_logger # Revert to get_logger from .logger
-from .services.llm_service import LLMService # Import LLMService
+from .logger import get_logger
+from .services.llm_service import LLMService 
+from app.crud import create_scan_record, get_all_obligations_with_checklist_items, update_scan_record_with_results
+from app.db.session import async_session_factory
+from radon.complexity import cc_visit
+from radon.raw import analyze as raw_analyze
 import ast
-from app.crud import create_scan_record # Import create_scan_record
-from app.db.session import async_session_factory # Import session maker for creating database sessions
+import re
+import subprocess
+from datetime import datetime
+import httpx
+import zipfile
+import io
+from urllib.parse import urlparse
+import inspect # Added import
 
-logger_nodes = get_logger(__name__) # Revert to get_logger(__name__)
+logger_nodes = get_logger(__name__) 
 
 # --- Sensitive Library Definitions for AST Analysis ---
 SENSITIVE_LIBRARIES_CONFIG = {
-    "biometric": ["face_recognition", "cv2", "dlib", "mediapipe"], # cv2 is OpenCV import name
-    "live_stream": ["websockets", "socketio", "aiohttp", "kafka", "pika", "rtsp", "webrtc"], # kafka-python often 'kafka'
+    "biometric": ["face_recognition", "cv2", "dlib", "mediapipe"], 
+    "live_stream": ["websockets", "socketio", "aiohttp", "kafka", "pika", "rtsp", "webrtc"], 
     "gpai": ["transformers", "tensorflow", "torch", "keras", "openai", "anthropic", "langchain", "google.generativeai"]
 }
 
-ALL_SENSITIVE_IMPORTS = list(set([lib for sublist in SENSITIVE_LIBRARIES_CONFIG.values() for lib in sublist]))
+_ALL_SENSITIVE_IMPORTS_SET = set()
+for category, libs in SENSITIVE_LIBRARIES_CONFIG.items():
+    for lib in libs:
+        if lib == "cv2": 
+            _ALL_SENSITIVE_IMPORTS_SET.add("opencv-python") 
+            _ALL_SENSITIVE_IMPORTS_SET.add("cv2") 
+        else:
+            _ALL_SENSITIVE_IMPORTS_SET.add(lib)
+ALL_SENSITIVE_IMPORTS = list(_ALL_SENSITIVE_IMPORTS_SET) 
+
+COMPLIANCE_LIBRARIES_CONFIG: Dict[str, Set[str]] = {
+    "data_handling": {"sqlite3", "sqlalchemy", "psycopg2", "pymysql", "pandas", "csv", "json", "pickle"},
+    "logging": {"logging"},
+    "network": {"requests", "httpx", "aiohttp", "urllib", "socket"} 
+}
+
 # --- End Sensitive Library Definitions ---
 
+async def initial_setup_node(state: ScanGraphState) -> dict:
+    """Initial setup node for the scan graph."""
+    logger_nodes.info("--- Executing InitialSetupNode ---")
+    # This node would typically initialize things, validate input, etc.
+    # For now, it's a placeholder.
+    if not state.scan_id or not state.input_model:
+        error_msg = "Scan ID or Input Model not found in initial state."
+        logger_nodes.error(error_msg)
+        return {"error_messages": state.error_messages + [error_msg]}
+
+    logger_nodes.info(f"Initial setup for scan_id: {state.scan_id} with input: {state.input_model.repo_url}")
+    return {
+        "repo_url": state.input_model.repo_url, # Pass along essential info
+        "error_messages": list(state.error_messages) # Ensure error_messages is initialized
+    }
 
 class PythonAstAnalyzer(ast.NodeVisitor):
-    """Visits AST nodes to find imported modules."""
-    def __init__(self):
-        self.imported_modules = set()
+    """Visits AST nodes to find imported modules and identify sensitive library usage and compliance signals."""
+    def __init__(self, file_path: str, file_content: str):
+        self.file_path = file_path
+        self.file_lines = file_content.splitlines()
+        self.violations: List[CodeViolationDetail] = []
+        self._reported_violation_keys = set()
+        self.compliance_signals: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
-    def visit_Import(self, node):
-        for alias in node.names:
-            # Add the root module (e.g., 'os.path' becomes 'os')
-            self.imported_modules.add(alias.name.split('.')[0])
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node):
-        if node.module:
-            # Add the root module (e.g., 'collections.abc' becomes 'collections')
-            self.imported_modules.add(node.module.split('.')[0])
-        # For 'from . import foo' or 'from ..bar import baz', node.module is None or starts with .
-        # These are relative imports, less likely to be top-level sensitive libraries directly,
-        # but good to be aware of. For now, we focus on top-level external libs.
-        self.generic_visit(node)
-
-    def get_imported_modules(self) -> List[str]:
-        return sorted(list(self.imported_modules))
-
-
-def _analyze_single_python_file(py_file_path: str) -> Tuple[str, CodeAnalysisResult, Optional[str]]:
-    """Synchronous helper to analyze a single Python file. Returns (file_path, result, error_message)."""
-    try:
-        logger_nodes.debug(f"Starting AST analysis for: {py_file_path}")
-        with open(py_file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    def _add_violation(self, module_root: str, node: ast.AST, policy_category: str, description: str):
+        violation_key = (module_root, node.lineno, policy_category)
+        if violation_key in self._reported_violation_keys:
+            return
+            
+        line_content = self.file_lines[node.lineno - 1].strip() if 0 < node.lineno <= len(self.file_lines) else "N/A (line out of bounds)"
         
-        tree = ast.parse(content, filename=py_file_path)
-        analyzer = PythonAstAnalyzer()
-        analyzer.visit(tree)
-        imported_modules_in_file = analyzer.get_imported_modules()
-        
-        result = CodeAnalysisResult(
-            file_path=py_file_path,
-            imported_modules=imported_modules_in_file
+        violation = CodeViolationDetail(
+            file_path=self.file_path,
+            line_number=node.lineno,
+            module_name=module_root, 
+            violating_code=line_content,
+            policy_category=policy_category,
+            description=description
         )
-        logger_nodes.debug(f"Finished AST analysis for: {py_file_path}, imports: {imported_modules_in_file}")
-        return py_file_path, result, None
+        self.violations.append(violation)
+        self._reported_violation_keys.add(violation_key)
+
+    def _check_and_report_module(self, module_name_full: str, node: ast.AST):
+        module_root = module_name_full.split('.')[0]
+        module_to_check_in_config = "opencv-python" if module_root == "cv2" else module_root
+        modules_to_evaluate = {module_root, module_to_check_in_config}
+
+        for eval_module in modules_to_evaluate:
+            for category, modules_in_category in SENSITIVE_LIBRARIES_CONFIG.items():
+                if eval_module in modules_in_category:
+                    description = f"Import of sensitive module '{module_root}' (via '{module_name_full}') linked to '{category}' policy."
+                    self._add_violation(module_root, node, category, description)
+
+        for compliance_category, libraries in COMPLIANCE_LIBRARIES_CONFIG.items():
+            if module_root in libraries:
+                signal_detail = {
+                    "file": self.file_path,
+                    "line": node.lineno,
+                    "library": module_root,
+                    "original_import": module_name_full
+                }
+                self.compliance_signals[compliance_category].append(signal_detail)
+
+    def visit_Import(self, node: ast.Import):
+        for alias in node.names:
+            self._check_and_report_module(alias.name, node)
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        if node.module:
+            self._check_and_report_module(node.module, node)
+        self.generic_visit(node)
+
+    def get_violations(self) -> List[CodeViolationDetail]:
+        return self.violations
+
+    def get_compliance_signals(self) -> Dict[str, List[Dict[str, Any]]]:
+        return dict(self.compliance_signals)
+
+def _analyze_single_python_file(py_file_path: str, repo_base_path: str) -> Tuple[str, List[CodeViolationDetail], Dict[str, List[Dict[str, Any]]], Optional[str]]:
+    """
+    Synchronous helper to analyze a single Python file. 
+    Returns (file_path, list_of_code_violation_details, compliance_signals, error_message).
+    """
+    error_message = None
+    violations = []
+    compliance_signals = defaultdict(list)
+    full_py_file_path = os.path.join(repo_base_path, py_file_path)
+
+    try:
+        # Ensure the path is absolute and exists before trying to open
+        if not os.path.exists(full_py_file_path):
+            logger_nodes.error(f"File not found at constructed path: {full_py_file_path} (original relative: {py_file_path})")
+            return py_file_path, [], {}, f"File not found: {full_py_file_path}"
+
+        with open(full_py_file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        tree = ast.parse(content, filename=py_file_path) # filename for ast can be relative for error reporting
+        analyzer = PythonAstAnalyzer(file_path=py_file_path, file_content=content) # Pass relative path for reporting
+        analyzer.visit(tree)
+        violations_in_file = analyzer.get_violations()
+        compliance_signals_in_file = analyzer.get_compliance_signals()
+        
+        if violations_in_file:
+            logger_nodes.debug(f"Found {len(violations_in_file)} violations in: {py_file_path}")
+            
+        return py_file_path, violations_in_file, compliance_signals_in_file, None
     except SyntaxError as e_syn:
         error_msg = f"SyntaxError analyzing {py_file_path}: {e_syn}"
         logger_nodes.warning(error_msg)
-        # Store a basic result indicating error for this file
-        result = CodeAnalysisResult(
-            file_path=py_file_path,
-            imported_modules=[f"SYNTAX_ERROR: {e_syn}"]
-        )
-        return py_file_path, result, error_msg
+        return py_file_path, [], {}, error_msg
     except Exception as e:
         error_msg = f"Error analyzing Python file {py_file_path}: {e}"
         logger_nodes.error(f"{error_msg} - in _analyze_single_python_file", exc_info=True)
-        result = CodeAnalysisResult(
-            file_path=py_file_path,
-            imported_modules=[f"ANALYSIS_ERROR: {e}"]
-        )
-        return py_file_path, result, error_msg
+        return py_file_path, [], {}, error_msg
 
-async def initial_setup_node(state: ScanGraphState) -> Dict[str, Any]:
-    """Populates initial repository information in the graph state."""
-    print("--- Executing InitialSetupNode ---")
-    input_model = state.input_model
-    repo_info: Optional[RepoInfo] = state.repo_info
+async def analyze_python_code_node(state: ScanGraphState) -> dict:
+    """Analyzes discovered Python files using AST to find imports and identify sensitive library usage and compliance signals."""
+    logger_nodes.info("--- Executing AnalyzePythonCodeNode ---")
+    all_detailed_violations: List[CodeViolationDetail] = []
+    ast_compliance_findings: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    error_messages = list(state.error_messages) 
 
-    if not repo_info:
-        if input_model.repo_details:
-            # If repo_details are directly in input_model, use them
-            repo_info = input_model.repo_details
-        elif input_model.repo_url:
-            # If only repo_url is in input_model, create a temporary RepoInputModel
-            # instance to pass to resolve_repo_input, or directly use it if resolve_repo_input
-            # can handle just the URL part of RepoInputModel.
-            # The current resolve_repo_input expects a full RepoInputModel.
-            temp_input_for_resolution = RepoInputModel(repo_url=input_model.repo_url)
-            try:
-                repo_info = await resolve_repo_input(temp_input_for_resolution)
-            except ValueError as e:
-                print(f"InitialSetupNode: Error resolving repo_input from URL: {e}")
-                return {"error_messages": state.error_messages + [f"Failed to resolve repository from URL: {e}"]}
-        else:
-            # This case should ideally be caught by input validation earlier
-            print("InitialSetupNode: Insufficient input to determine repository details.")
-            return {"error_messages": state.error_messages + ["Insufficient input to determine repository details."]}
-
-    updated_state: Dict[str, Any] = {
-        "input_model": input_model, # Ensure it's part of the returned state update
-        "repo_info": repo_info,
-        "error_messages": state.error_messages # carry over any existing errors
-    }
-
-    if not repo_info:
-        print("InitialSetupNode: Failed to resolve repo_info")
-        # Append error message if not already set by a more specific error
-        if not any("Failed to resolve repository" in msg for msg in updated_state.get("error_messages", [])):
-            updated_state["error_messages"] = updated_state.get("error_messages", []) + ["Failed to resolve repository details in InitialSetupNode."]
-    else:
-        print(f"InitialSetupNode: Resolved repo_info: {repo_info.owner}/{repo_info.repo} branch: {repo_info.branch}")
-
-    return updated_state
-
-async def download_and_unzip_repo_node(state: ScanGraphState) -> Dict[str, Any]:
-    """Downloads the repository ZIP and unzips it into a temporary directory."""
-    logger_nodes.info("--- Executing DownloadAndUnzipRepoNode ---")
-    repo_info = state.repo_info
-    error_messages = list(state.error_messages) # Make a mutable copy
-
-    if not repo_info:
-        error_messages.append("Repository information is missing, cannot download.")
-        logger_nodes.error("DownloadAndUnzipRepoNode: RepoInfo missing.")
-        return {"error_messages": error_messages}
-
-    temp_dir = None
-    try:
-        # Create a temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="repo_scan_")
-        logger_nodes.info(f"Created temporary directory: {temp_dir}")
-
-        # 1. Get repository archive info (target branch and commit SHA)
-        logger_nodes.info(f"Fetching archive info for {repo_info.owner}/{repo_info.repo} (branch: {repo_info.branch})")
-        # Use fetch_github_repo_branch_info to get the actual branch and commit SHA
-        target_branch, actual_commit_sha = await fetch_github_repo_branch_info(
-            owner=repo_info.owner,
-            repo_name=repo_info.repo,
-            branch_name=repo_info.branch, # This can be None, fetch_github_repo_branch_info will get default
-            token=settings.GITHUB_TOKEN
-        )
-        logger_nodes.info(f"Got target branch: {target_branch}, Commit SHA: {actual_commit_sha}")
-
-        # Construct the zipball URL using the commit SHA for precision
-        # This zip_url is for logging/reference; download_repo_zip will construct its own based on commit_sha
-        archive_url = f"https://api.github.com/repos/{repo_info.owner}/{repo_info.repo}/zipball/{actual_commit_sha}"
-        logger_nodes.info(f"Reference archive URL: {archive_url}")
-
-        # 2. Download the repository zip file
-        # The download_repo_zip function handles the creation of the zip_url and filename internally.
-        # It expects RepoInfo, commit_sha/branch, token, and download_dir.
-        logger_nodes.info(f"Downloading repository to {temp_dir} using commit SHA {actual_commit_sha}...")
-        zip_file_path = await download_repo_zip(
-            archive_url=archive_url,
-            token=settings.GITHUB_TOKEN
-        )
-
-        if not zip_file_path:
-            error_msg = "Failed to download repository zip file."
-            logger_nodes.error(error_msg)
-            error_messages.append(error_msg)
-            return {"temp_repo_path": None, "error_messages": error_messages}
-
-        logger_nodes.info(f"Repository downloaded successfully to {zip_file_path}.")
-
-        # 3. Unzip the archive
-        logger_nodes.info(f"Unzipping archive {zip_file_path} to {temp_dir}...")
-        # unzip_archive returns the path to the *actual content directory* within temp_dir
-        unzipped_content_path = unzip_archive(zip_file_path, temp_dir) 
-        logger_nodes.info(f"Repository unzipped successfully to {unzipped_content_path}.")
-
-        # Clean up the downloaded zip file as it's no longer needed
-        try:
-            os.remove(zip_file_path)
-            logger_nodes.info(f"Cleaned up downloaded zip file: {zip_file_path}")
-        except OSError as e:
-            logger_nodes.warning(f"Could not remove zip file {zip_file_path}: {e}")
-
-        # Update state with paths and commit SHA
-        # Note: temp_dir is the parent temporary directory created at the start.
-        # unzipped_content_path is the actual path to the repository's root contents.
+    python_files = state.discovered_files.get('python', [])
+    if not python_files:
+        logger_nodes.info("No Python files to analyze.")
         return {
-            "temp_repo_path": unzipped_content_path, # This is the path to the unzipped repo code
-            "commit_sha": actual_commit_sha,
-            "repo_download_url": archive_url, 
-            "error_messages": error_messages 
+            "detailed_code_violations": all_detailed_violations,
+            "ast_compliance_findings": dict(ast_compliance_findings),
+            "error_messages": error_messages
         }
 
-    except Exception as e:
-        logger_nodes.error(f"Error in DownloadAndUnzipRepoNode: {e}", exc_info=True)
-        error_messages.append(f"Failed to download or unzip repository: {str(e)}")
-        # Clean up temp_dir if it was created and an error occurred
-        if temp_dir and os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-                logger_nodes.info(f"Cleaned up temporary directory {temp_dir} after error.")
-            except Exception as cleanup_e:
-                logger_nodes.error(f"Error cleaning up temp_dir {temp_dir}: {cleanup_e}")
-        return {"temp_repo_path": None, "error_messages": error_messages}
-    # Note: Successful cleanup of temp_dir should happen at the end of the entire graph execution.
-    # Storing temp_dir_path in the state allows a final node to handle this.
-
-
-async def discover_files_node(state: ScanGraphState) -> dict:
-    """Scans the unzipped repository to discover relevant files (documentation, code)."""
-    logger_nodes.info("--- Executing DiscoverFilesNode ---")
-    if not state.temp_repo_path or not os.path.exists(state.temp_repo_path):
-        logger_nodes.error("Temporary repository path not found or invalid.")
-        return {"error_messages": state.error_messages + ["Temporary repository path not found for file discovery."]}
-
-    discovered_docs = {}
-    discovered_code = {}
-    error_messages = list(state.error_messages) # Make a mutable copy
-
-    try:
-        logger_nodes.info(f"Discovering documentation files in {state.temp_repo_path}...")
-        # Run synchronous glob operations in a separate thread
-        # find_documentation_files returns a tuple: (markdown_files, openapi_files)
-        markdown_files, openapi_files = await asyncio.to_thread(find_documentation_files, state.temp_repo_path)
-        
-        discovered_docs_dict = {}
-        if markdown_files:
-            discovered_docs_dict["markdown_files"] = markdown_files
-            logger_nodes.info(f"Found {len(markdown_files)} markdown_files files.")
-        if openapi_files:
-            discovered_docs_dict["openapi_files"] = openapi_files
-            logger_nodes.info(f"Found {len(openapi_files)} openapi_files files.")
-
-        logger_nodes.info(f"Discovering code files in {state.temp_repo_path}...")
-        # Run synchronous glob operations in a separate thread
-        # Assuming find_code_files returns a dictionary as expected
-        discovered_code_dict = await asyncio.to_thread(find_code_files, state.temp_repo_path)
-        for file_type, files in discovered_code_dict.items():
-            logger_nodes.info(f"Found {len(files)} {file_type} code files.")
-
-    except Exception as e:
-        error_msg = f"Error during file discovery: {e}"
-        logger_nodes.error(error_msg, exc_info=True)
-        error_messages.append(error_msg)
-        # Return current state of discovered files even if one part fails
-        # and include the error message.
-
-    # Merge discovered files into the state's discovered_files dictionary
-    # Ensure we don't overwrite existing keys if this node were to be run multiple times
-    # or if other nodes also contribute to discovered_files (though not currently the case).
-    updated_discovered_files = state.discovered_files.copy() # Start with existing
-    if discovered_docs_dict: # Use the constructed dictionary
-        updated_discovered_files.update(discovered_docs_dict)
-    if discovered_code_dict: # Use the result from find_code_files
-        updated_discovered_files.update(discovered_code_dict)
-
-    logger_nodes.info(f"File discovery complete. Total discovered file categories: {len(updated_discovered_files)}")
+    logger_nodes.info(f"Analyzing {len(python_files)} Python files for detailed violations and compliance signals...")
     
+    thread_results = await asyncio.gather(*[asyncio.to_thread(_analyze_single_python_file, fp, state.repo_local_path) for fp in python_files])
+
+    for file_path, file_violations, file_compliance_signals, error_msg in thread_results:
+        if error_msg:
+            error_messages.append(error_msg)
+        all_detailed_violations.extend(file_violations)
+        if file_compliance_signals:
+            for category, signals_list in file_compliance_signals.items():
+                if signals_list:
+                    ast_compliance_findings[category].extend(signals_list)
+        
+    logger_nodes.info(f"Python code analysis complete. Found {len(all_detailed_violations)} detailed violations. Compliance signals detected: { {k: len(v) for k, v in ast_compliance_findings.items()} }")
+
     return {
-        "discovered_files": updated_discovered_files,
+        "detailed_code_violations": all_detailed_violations,
+        "ast_compliance_findings": dict(ast_compliance_findings),
         "error_messages": error_messages
     }
 
+async def analyze_code_complexity_node(state: ScanGraphState) -> dict:
+    """Analyzes discovered Python files for code complexity metrics."""
+    logger_nodes.info("--- Executing AnalyzeCodeComplexityNode ---")
+    # This node calculates cyclomatic complexity for Python files.
 
-async def process_discovered_files_node(state: ScanGraphState) -> dict:
-    """Reads and parses discovered documentation files (Markdown, OpenAPI)."""
-    logger_nodes.info("--- Executing ProcessDiscoveredFilesNode ---")
+    # Initialize local error messages and success counter
+    local_error_messages = [] 
+    files_processed_successfully = 0
 
-    # Initialize from current state or defaults
-    file_content_cache = state.file_content_cache.copy()
-    extracted_markdown_docs = list(state.extracted_markdown_docs)
-    parsed_openapi_specs = list(state.parsed_openapi_specs)
+    code_ast_analysis_results: Dict[str, Any] = {}
+    python_files_relative_paths = state.discovered_files.get("python", [])
+
+    if not python_files_relative_paths:
+        logger_nodes.info("No Python files found to analyze for complexity.")
+    else:
+        logger_nodes.info(f"Analyzing {len(python_files_relative_paths)} Python files for complexity...")
+
+    repo_local_path = state.repo_local_path
+    if not repo_local_path or not os.path.isdir(repo_local_path):
+        error_msg = f"Invalid or missing repo_local_path: {repo_local_path}"
+        logger_nodes.error(error_msg)
+        local_error_messages.append(error_msg)
+        return {
+            "code_complexity": None,
+            "error_messages": list(state.error_messages) + local_error_messages
+        }
+
+    cumulative_complexity = 0
+
+    for relative_file_path in python_files_relative_paths:
+        absolute_file_path = os.path.join(repo_local_path, relative_file_path)
+        try:
+            if not os.path.exists(absolute_file_path):
+                err_msg = f"File not found at constructed path: {absolute_file_path} (original relative: {relative_file_path})"
+                logger_nodes.error(err_msg)
+                local_error_messages.append(err_msg)
+                continue
+
+            with open(absolute_file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            raw_metrics = raw_analyze(content)
+            # Fix 1: Remove ignore_names=True. cc_visit returns a list of radon block objects.
+            complexity_blocks = cc_visit(content)
+
+            # Fix 2: Correctly sum complexities from the list of blocks
+            current_file_total_complexity = 0
+            block_details_for_file = []
+            if complexity_blocks:
+                current_file_total_complexity = sum(b.complexity for b in complexity_blocks)
+                for block in complexity_blocks:
+                    block_details_for_file.append({
+                        "name": getattr(block, 'name', 'N/A'),
+                        "type": str(getattr(block, 'type', 'N/A')),
+                        "lineno": getattr(block, 'lineno', 0),
+                        "col_offset": getattr(block, 'col_offset', 0),
+                        "endline": getattr(block, 'endline', 0),
+                        "complexity": getattr(block, 'complexity', 0),
+                    })
+            
+            cumulative_complexity += current_file_total_complexity
+            files_processed_successfully += 1
+
+            code_ast_analysis_results[relative_file_path] = {
+                "complexity_blocks": block_details_for_file, # Store list of dicts
+                "raw_analysis": raw_metrics._asdict() if raw_metrics else {} # Convert namedtuple to dict
+            }
+        except Exception as e:
+            err_msg = f"Error analyzing file {relative_file_path} for complexity: {e}"
+            logger_nodes.error(err_msg, exc_info=True)
+            local_error_messages.append(err_msg)
+    
+    avg_complexity = 0
+    if files_processed_successfully > 0:
+        avg_complexity = cumulative_complexity / files_processed_successfully
+
+    output_code_complexity_dict = {
+        "average_complexity": avg_complexity,
+        "details_per_file": code_ast_analysis_results
+    }
+
+    return {
+        "code_complexity": output_code_complexity_dict,
+        "error_messages": list(state.error_messages) + local_error_messages
+    }
+
+async def download_and_unzip_repo_node(state: ScanGraphState) -> dict:
+    logger_nodes.info("--- Executing download_and_unzip_repo_node ---")
+    input_model = state.input_model
+    repo_local_path = None
+    error_messages = list(state.error_messages)
+    temp_dir_obj = None # To hold the TemporaryDirectory object
+
+    try:
+        owner, repo_name, branch, repo_url_str = None, None, None, None
+
+        if input_model.repo_url:
+            repo_url_str = str(input_model.repo_url)
+            parsed_url = urlparse(repo_url_str)
+            path_parts = parsed_url.path.strip('/').split('/')
+            if len(path_parts) >= 2 and parsed_url.hostname == "github.com":
+                owner = path_parts[0]
+                repo_name = path_parts[1].replace('.git', '')
+                # Branch might be part of the URL (e.g., /tree/branch_name) or default
+                if len(path_parts) > 3 and path_parts[2] == 'tree':
+                    branch = path_parts[3]
+                else:
+                    # Attempt to fetch default branch if not specified
+                    # This requires an API call, deferring for now or assuming 'main'/'master'
+                    # For simplicity, we'll try common defaults or require explicit branch for non-URL inputs
+                    pass # Branch remains None, will be handled by get_repo_archive_info
+            else:
+                error_messages.append(f"Invalid GitHub URL format: {repo_url_str}")
+                logger_nodes.error(f"Invalid GitHub URL format: {repo_url_str}")
+                return {"repo_local_path": None, "error_messages": error_messages, "_temp_dir_object": None}
+
+        elif input_model.repo_details:
+            owner = input_model.repo_details.owner
+            repo_name = input_model.repo_details.repo
+            branch = input_model.repo_details.branch
+            repo_url_str = f"https://github.com/{owner}/{repo_name}"
+            if branch:
+                repo_url_str += f"/tree/{branch}"
+        else:
+            error_messages.append("No repository input provided.")
+            logger_nodes.error("No repository input provided in input_model.")
+            return {"repo_local_path": None, "error_messages": error_messages, "_temp_dir_object": None}
+
+        if not owner or not repo_name:
+            error_messages.append("Could not determine repository owner and name.")
+            logger_nodes.error("Could not determine repository owner and name.")
+            return {"repo_local_path": None, "error_messages": error_messages, "_temp_dir_object": None}
+
+        # Create RepoInfo object for the utility function
+        repo_info_for_util = RepoInfo(owner=owner, repo=repo_name, branch=branch) # branch can be None
+
+        # --- BEGIN DIAGNOSTIC LOGGING ---
+        logger_nodes.info(f"Attempting to call get_repo_archive_info: {get_repo_archive_info}")
+        try:
+            logger_nodes.info(f"Inspect get_repo_archive_info args: {inspect.getfullargspec(get_repo_archive_info)}")
+        except Exception as e:
+            logger_nodes.error(f"Could not inspect get_repo_archive_info: {e}")
+        try:
+            logger_nodes.info(f"Source file of get_repo_archive_info: {inspect.getfile(get_repo_archive_info)}")
+        except TypeError:
+            logger_nodes.warning("Could not determine source file for get_repo_archive_info (likely a built-in or C module).")
+        # --- END DIAGNOSTIC LOGGING ---
+        
+        # Use a helper to get archive URL and potentially default branch if not specified
+        # get_repo_archive_info will handle None branch and find default
+        archive_url, actual_branch, commit_sha = await get_repo_archive_info(repo_details_obj=repo_info_for_util, token=settings.GITHUB_TOKEN)
+        
+        # Update state with the definitive repo_info (especially if default branch was resolved)
+        # and the commit_sha
+        state.repo_info = RepoInfo(owner=owner, repo=repo_name, branch=actual_branch) # This is already done by the caller or should be set here
+        state.commit_sha = commit_sha
+
+        logger_nodes.info(f"Attempting to download {owner}/{repo_name} (Branch: {actual_branch}, SHA: {commit_sha}) from: {archive_url}")
+
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            headers = {}
+            if settings.GITHUB_TOKEN:
+                headers["Authorization"] = f"token {settings.GITHUB_TOKEN}"
+            
+            response = await client.get(archive_url, headers=headers)
+            response.raise_for_status() # Raises HTTPStatusError for 4xx/5xx responses
+
+            # Create a persistent temporary directory
+            # The directory will be cleaned up when temp_dir_obj is garbage collected or explicitly cleaned.
+            # For LangGraph, if state is passed around, this object needs to be managed carefully.
+            # Storing the path string in repo_local_path is standard.
+            temp_dir_obj = tempfile.TemporaryDirectory()
+            repo_local_path = temp_dir_obj.name
+            logger_nodes.info(f"Created temporary directory: {repo_local_path}")
+
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+                # GitHub zips usually have a single top-level directory like 'reponame-branchname'
+                # We want to extract the contents of this directory directly into our temp_dir_obj.name
+                
+                # Get list of all files and directories in zip
+                members = zf.namelist()
+                if not members:
+                    raise ValueError("ZIP archive is empty.")
+
+                # Determine the root directory name within the zip (e.g., 'myrepo-main/')
+                # It's typically the first member if it's a directory
+                zip_root_dir = ""
+                common_prefix = os.path.commonprefix(members)
+                if common_prefix and zf.getinfo(common_prefix).is_dir():
+                    zip_root_dir = common_prefix
+                
+                logger_nodes.info(f"Zip root directory identified as: '{zip_root_dir}'. Extracting contents.")
+
+                for member_info in zf.infolist():
+                    # Skip __MACOSX or other unwanted meta-files if any
+                    if member_info.filename.startswith('__MACOSX/'):
+                        continue
+                    
+                    # Adjust path to extract files directly into repo_local_path
+                    # by stripping the zip_root_dir prefix
+                    if zip_root_dir and member_info.filename.startswith(zip_root_dir):
+                        target_path = os.path.join(repo_local_path, member_info.filename[len(zip_root_dir):])
+                    else:
+                        # If no common root, or file is not under it (should not happen for GitHub zips)
+                        target_path = os.path.join(repo_local_path, member_info.filename)
+                    
+                    # Ensure target_path is within repo_local_path to prevent Zip Slip vulnerability
+                    if not os.path.abspath(target_path).startswith(os.path.abspath(repo_local_path)):
+                        raise zipfile.BadZipFile(f"Attempted Zip Slip vulnerability: {member_info.filename}")
+
+                    if member_info.is_dir():
+                        os.makedirs(target_path, exist_ok=True)
+                    else:
+                        # Create parent directory if it doesn't exist
+                        os.makedirs(os.path.dirname(target_path), exist_ok=True)
+                        with open(target_path, "wb") as f_out:
+                            f_out.write(zf.read(member_info.filename))
+                
+            logger_nodes.info(f"Successfully downloaded and unzipped repository to {repo_local_path}")
+
+    except httpx.HTTPStatusError as e:
+        error_msg = f"HTTP error occurred while downloading repository: {e.request.url} - {e.response.status_code} - {e.response.text[:200]}"
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        if temp_dir_obj: temp_dir_obj.cleanup()
+        temp_dir_obj = None
+        repo_local_path = None
+    except httpx.RequestError as e:
+        error_msg = f"Request error occurred while downloading repository: {e.request.url} - {e}"
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        if temp_dir_obj: temp_dir_obj.cleanup()
+        temp_dir_obj = None
+        repo_local_path = None
+    except zipfile.BadZipFile as e:
+        error_msg = f"Error unzipping repository: Bad ZIP file. {e}"
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        if temp_dir_obj: temp_dir_obj.cleanup()
+        temp_dir_obj = None
+        repo_local_path = None
+    except ValueError as e:
+        error_msg = f"Error processing repository: {e}"
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        if temp_dir_obj: temp_dir_obj.cleanup()
+        temp_dir_obj = None
+        repo_local_path = None
+    except Exception as e:
+        error_msg = f"An unexpected error occurred in download_and_unzip_repo_node: {type(e).__name__} - {e}"
+        logger_nodes.error(error_msg, exc_info=True)
+        error_messages.append(error_msg)
+        if temp_dir_obj: temp_dir_obj.cleanup()
+        temp_dir_obj = None
+        repo_local_path = None
+
+    # The temp_dir_obj needs to be kept alive for the duration of the scan.
+    # Storing it in the state dict directly. Pydantic might complain if it's not serializable.
+    # A better approach for long-lived temp dirs might be needed if state is serialized.
+    # For now, we return it, and the graph orchestrator might need to manage its lifecycle.
+    # Or, we simply rely on it staying in scope of this Python process.
+    # Let's try returning it in the dict and see how LangGraph handles it or if we need to adjust.
+    # If Pydantic has issues, we'll remove it from the return and just pass the path.
+    # The `tempfile.TemporaryDirectory` object should be stored in `state.temp_dir_obj` (new field)
+    # or managed by the orchestrator if it needs to survive beyond this node's scope in a complex way.
+    # For now, we are not adding it to the state model to avoid Pydantic serialization issues with non-serializable objects.
+    # The temporary directory will be cleaned up when `temp_dir_obj` goes out of scope and is garbage collected.
+    # This is usually fine if the entire scan happens within one continuous process flow.
+
+    # We will add 'temp_dir_obj_ref' to ScanGraphState if we want to manage its lifecycle explicitly via state.
+    # For now, we are not adding it to the state model to avoid Pydantic serialization issues with non-serializable objects.
+    # The temporary directory will be cleaned up when `temp_dir_obj` goes out of scope and is garbage collected.
+    # This is usually fine if the entire scan happens within one continuous process flow.
+
+    return {
+        "repo_local_path": repo_local_path, 
+        "error_messages": error_messages,
+        "repo_info": state.repo_info, # Pass along updated repo_info
+        "commit_sha": state.commit_sha, # Pass along commit_sha
+        "_temp_dir_object": temp_dir_obj # Return the TemporaryDirectory object itself
+    }
+
+async def discover_files_node(state: ScanGraphState) -> dict:
+    logger_nodes.info("--- Executing discover_files_node ---")
+    repo_path = state.repo_local_path
+    discovered_files_map: Dict[str, List[str]] = defaultdict(list)
     error_messages = list(state.error_messages)
 
-    # Process Markdown files
-    markdown_files = state.discovered_files.get('markdown_files', [])
-    if markdown_files:
-        logger_nodes.info(f"Processing {len(markdown_files)} Markdown files...")
-        for md_file_path in markdown_files:
+    if not repo_path or not os.path.isdir(repo_path):
+        error_msg = f"Repository path '{repo_path}' is invalid or not a directory."
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        return {"discovered_files": {}, "error_messages": error_messages}
+
+    logger_nodes.info(f"Discovering files in repository: {repo_path}")
+
+    # Define file types and their corresponding keys in discovered_files_map
+    # Keys should align with what downstream nodes expect, e.g., 'python_files', 'markdown_files'
+    file_type_map = {
+        '.md': 'markdown_files',
+        '.py': 'python_files',
+        '.json': 'openapi_files', # Potential OpenAPI/JSON files
+        '.yaml': 'openapi_files', # Potential OpenAPI/YAML files
+        '.yml': 'openapi_files',  # Potential OpenAPI/YAML files
+        '.js': 'javascript_files',
+        '.ts': 'typescript_files',
+        # Add other relevant file types here, e.g., for requirements, Dockerfile, etc.
+        'requirements.txt': 'requirements_files', # Specific file name
+        'Dockerfile': 'docker_files' # Specific file name
+    }
+    # Files to ignore by name or pattern
+    ignore_patterns = ['.git', '__pycache__', 'node_modules', '.DS_Store', 'venv', '.env']
+    # Directories to ignore completely
+    ignore_dirs = ['.git', '__pycache__', 'node_modules', 'venv', 'dist', 'build', 'docs/build'] 
+
+    try:
+        for root, dirs, files in os.walk(repo_path, topdown=True):
+            # Filter out ignored directories
+            dirs[:] = [d for d in dirs if d not in ignore_dirs and not any(d.startswith(p) for p in ignore_patterns)]
+            
+            for file_name in files:
+                if any(file_name.startswith(p) for p in ignore_patterns) or any(p in file_name for p in ignore_patterns if '*' in p ):
+                    continue # Skip ignored files
+
+                file_path = os.path.join(root, file_name)
+                relative_path = os.path.relpath(file_path, repo_path)
+
+                # Check for specific file names first
+                matched_specific_file = False
+                for specific_name, key_name in file_type_map.items():
+                    if file_name == specific_name:
+                        discovered_files_map[key_name].append(relative_path)
+                        logger_nodes.debug(f"Discovered {key_name.replace('_files', '')} file: {relative_path}")
+                        matched_specific_file = True
+                        break
+                if matched_specific_file:
+                    continue
+
+                # Then check by extension
+                _, ext = os.path.splitext(file_name)
+                if ext:
+                    ext_lower = ext.lower()
+                    if ext_lower in file_type_map:
+                        key_name = file_type_map[ext_lower]
+                        discovered_files_map[key_name].append(relative_path)
+                        logger_nodes.debug(f"Discovered {key_name.replace('_files', '')} file ({ext_lower}): {relative_path}")
+                    # else:
+                        # logger_nodes.debug(f"Skipping file with unmapped extension '{ext_lower}': {relative_path}")
+            
+    except Exception as e:
+        error_msg = f"Error during file discovery in {repo_path}: {e}"
+        logger_nodes.error(error_msg, exc_info=True)
+        error_messages.append(error_msg)
+        # Return empty or partially discovered files if error occurs mid-way?
+        # For now, returning what was found before the error.
+
+    # Convert defaultdict to dict for the state
+    final_discovered_files = dict(discovered_files_map)
+    logger_nodes.info(f"File discovery completed. Found: { {k: len(v) for k, v in final_discovered_files.items()} }")
+
+    return {
+        "discovered_files": final_discovered_files,
+        "error_messages": error_messages
+    }
+
+from app.utils import extract_text_and_headings_from_markdown, parse_openapi_file # Add necessary imports
+
+async def process_discovered_files_node(state: ScanGraphState) -> dict:
+    logger_nodes.info("--- Executing process_discovered_files_node ---")
+    repo_path = state.repo_local_path
+    discovered_files_map = state.discovered_files
+    error_messages = list(state.error_messages)
+
+    # Initialize or copy existing state fields to update
+    file_content_cache: Dict[str, str] = state.file_content_cache.copy() if state.file_content_cache else {}
+    extracted_markdown_docs: List[Tuple[str, str, List[str]]] = list(state.extracted_markdown_docs) if state.extracted_markdown_docs else []
+    parsed_openapi_specs: List[Tuple[str, Dict[str, Any]]] = list(state.parsed_openapi_specs) if state.parsed_openapi_specs else []
+
+    if not repo_path or not os.path.isdir(repo_path):
+        error_msg = f"Repository path '{repo_path}' is invalid or not a directory for processing files."
+        logger_nodes.error(error_msg)
+        error_messages.append(error_msg)
+        return {
+            "file_content_cache": file_content_cache,
+            "extracted_markdown_docs": extracted_markdown_docs,
+            "parsed_openapi_specs": parsed_openapi_specs,
+            "error_messages": error_messages
+        }
+
+    logger_nodes.info(f"Processing discovered files from: {repo_path}")
+    files_processed_count = 0
+
+    for file_category, relative_paths in discovered_files_map.items():
+        logger_nodes.info(f"Processing {len(relative_paths)} files in category: {file_category}")
+        for rel_path in relative_paths:
+            abs_file_path = os.path.join(repo_path, rel_path)
+            if not os.path.isfile(abs_file_path):
+                warn_msg = f"File not found at {abs_file_path} (relative: {rel_path}), skipping."
+                logger_nodes.warning(warn_msg)
+                # error_messages.append(warn_msg) # Decide if this should be a hard error
+                continue
+            
             try:
-                with open(md_file_path, 'r', encoding='utf-8') as f:
+                with open(abs_file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     content = f.read()
-                file_content_cache[md_file_path] = content
-                
-                text, headings = extract_text_and_headings_from_markdown(md_file_path)
-                # Append as a tuple to match ScanGraphState model definition
-                extracted_markdown_docs.append((md_file_path, text, headings))
-                logger_nodes.info(f"Successfully processed Markdown/RST: {md_file_path}")
-            except Exception as e:
-                error_msg = f"Error processing Markdown/RST file {md_file_path}: {e}"
-                logger_nodes.error(error_msg, exc_info=True)
-                error_messages.append(error_msg)
-    else:
-        logger_nodes.info("No Markdown files to process.")
+                file_content_cache[rel_path] = content
+                files_processed_count += 1
+                logger_nodes.debug(f"Cached content for: {rel_path} ({len(content)} bytes)")
 
-    # Process OpenAPI files
-    openapi_files = state.discovered_files.get('openapi_files', [])
-    if openapi_files:
-        logger_nodes.info(f"Processing {len(openapi_files)} OpenAPI/Swagger files...")
-        for spec_file_path in openapi_files:
-            try:
-                # parse_openapi_file reads the file itself
-                parsed_spec = parse_openapi_file(spec_file_path)
-                if parsed_spec:
-                    # Cache the raw content if successfully parsed (or attempt to read for cache)
+                # Specific processing based on category
+                if file_category == 'markdown_files':
                     try:
-                        with open(spec_file_path, 'r', encoding='utf-8') as f:
-                            file_content_cache[spec_file_path] = f.read()
-                    except Exception as e_read:
-                        logger_nodes.warning(f"Could not cache content for OpenAPI spec {spec_file_path}: {e_read}")
+                        text_content, headings = extract_text_and_headings_from_markdown(abs_file_path)
+                        if text_content:
+                            extracted_markdown_docs.append((rel_path, text_content, headings))
+                            logger_nodes.debug(f"Extracted Markdown from: {rel_path}")
+                    except Exception as md_e:
+                        error_msg = f"Error extracting markdown from {rel_path}: {md_e}"
+                        logger_nodes.error(error_msg, exc_info=True)
+                        error_messages.append(error_msg)
 
-                    # Append as a tuple to match ScanGraphState model definition
-                    parsed_openapi_specs.append((spec_file_path, parsed_spec))
-                    logger_nodes.info(f"Successfully parsed OpenAPI/Swagger: {spec_file_path}")
-                else:
-                    logger_nodes.warning(f"File {spec_file_path} was not recognized as a valid OpenAPI/Swagger spec or parsing failed.")
+                elif file_category == 'openapi_files': # Covers .json, .yaml, .yml from discover_node
+                    try:
+                        parsed_spec = parse_openapi_file(abs_file_path)
+                        if parsed_spec: # parse_openapi_file returns None if not a valid spec
+                            parsed_openapi_specs.append((rel_path, parsed_spec))
+                            logger_nodes.debug(f"Parsed OpenAPI/Swagger spec from: {rel_path}")
+                        # else:
+                            # logger_nodes.debug(f"File {rel_path} was not a recognized OpenAPI/Swagger spec.")
+                    except Exception as oapi_e:
+                        error_msg = f"Error parsing OpenAPI/Swagger file {rel_path}: {oapi_e}"
+                        logger_nodes.error(error_msg, exc_info=True)
+                        error_messages.append(error_msg)
+                
+                # Other categories like 'python_files', 'javascript_files' are just cached for now.
+                # Specific parsing for them will happen in downstream nodes.
+
             except Exception as e:
-                error_msg = f"Error processing OpenAPI/Swagger file {spec_file_path}: {e}"
+                error_msg = f"Error processing file {rel_path}: {e}"
                 logger_nodes.error(error_msg, exc_info=True)
                 error_messages.append(error_msg)
-    else:
-        logger_nodes.info("No OpenAPI/Swagger files to process.")
 
-    logger_nodes.info("File processing complete.")
+    logger_nodes.info(f"File processing completed. Total files cached: {files_processed_count}. Markdown docs: {len(extracted_markdown_docs)}. OpenAPI specs: {len(parsed_openapi_specs)}.")
 
     return {
         "file_content_cache": file_content_cache,
@@ -342,414 +670,50 @@ async def process_discovered_files_node(state: ScanGraphState) -> dict:
         "error_messages": error_messages
     }
 
-
-async def analyze_python_code_node(state: ScanGraphState) -> dict:
-    """Analyzes discovered Python files using AST to find imports and identify sensitive library usage."""
-    logger_nodes.info("--- Executing AnalyzePythonCodeNode ---")
-
-    analysis_results_dict: Dict[str, CodeAnalysisResult] = {}
-    aggregated_signals = CodeSignal() # Initialize with defaults
-    error_messages = list(state.error_messages) # Preserve existing errors
-
-    python_files = state.discovered_files.get('python', [])
-    if not python_files:
-        logger_nodes.info("No Python files to analyze.")
-        return {
-            "code_ast_analysis_results": analysis_results_dict,
-            "aggregated_code_signals": aggregated_signals,
-            "error_messages": error_messages
-        }
-
-    logger_nodes.info(f"Analyzing {len(python_files)} Python files using asyncio.to_thread...")
-
-    tasks = [_analyze_single_python_file(py_file_path) for py_file_path in python_files]
-    # Run analysis for all files concurrently in threads
-    # Note: asyncio.to_thread is for a single blocking function. 
-    # To run multiple, we wrap them or use a loop with asyncio.create_task(asyncio.to_thread(...))
-    # Or, more simply, use asyncio.gather with to_thread for each call.
-    
-    thread_results = await asyncio.gather(*[asyncio.to_thread(_analyze_single_python_file, fp) for fp in python_files])
-
-    for file_path, single_file_result, error_msg in thread_results:
-        analysis_results_dict[file_path] = single_file_result
-        if error_msg:
-            error_messages.append(error_msg)
-        
-        # Update aggregated signals from successfully parsed files
-        if not error_msg: # Only process if _analyze_single_python_file reported no error for this file
-            for imported_module in single_file_result.imported_modules:
-                if imported_module in ALL_SENSITIVE_IMPORTS and imported_module not in aggregated_signals.detected_libraries:
-                    aggregated_signals.detected_libraries.append(imported_module)
-                
-                if imported_module in SENSITIVE_LIBRARIES_CONFIG["biometric"]:
-                    aggregated_signals.biometric = True
-                if imported_module in SENSITIVE_LIBRARIES_CONFIG["live_stream"]:
-                    aggregated_signals.live_stream = True
-                if imported_module in SENSITIVE_LIBRARIES_CONFIG["gpai"]:
-                    aggregated_signals.uses_gpai = True
-    
-    aggregated_signals.detected_libraries.sort()
-    logger_nodes.info(f"Python code analysis complete. Aggregated signals: {aggregated_signals.model_dump_json(indent=2)}")
-
-    return {
-        "code_ast_analysis_results": analysis_results_dict,
-        "aggregated_code_signals": aggregated_signals,
-        "error_messages": error_messages
-    }
-
-
+# --- Placeholder for summarize_documentation_node ---
 async def summarize_documentation_node(state: ScanGraphState) -> dict:
-    """Summarizes extracted documentation using an LLM."""
-    logger_nodes.info("--- Executing SummarizeDocumentationNode ---")
-    error_messages = list(state.error_messages) # Preserve existing errors
-    doc_summary_points: Optional[List[str]] = None
+    logger_nodes.info("--- Executing summarize_documentation_node (Placeholder) ---")
+    logger_nodes.warning("summarize_documentation_node is a placeholder. Actual summarization logic needed.")
+    return {"documentation_summary": "Placeholder summary", "error_messages": list(state.error_messages)}
 
-    # Consolidate markdown text and headings
-    full_markdown_text = "\n\n---\n\n".join([doc[1] for doc in state.extracted_markdown_docs]) # Use doc[1] for content
-    all_headings = []
-    for doc in state.extracted_markdown_docs:
-        all_headings.extend(doc[2]) # Use doc[2] for headings
-    
-    # Prepare OpenAPI spec summaries (currently storing full parsed dict, might need adjustment if LLMService expects simpler summary)
-    # For now, _construct_llm_prompt_for_doc_summary in LLMService seems to handle the dict.
-    openapi_specs_for_llm = [spec_data for _, spec_data in state.parsed_openapi_specs]
-
-    if not full_markdown_text and not openapi_specs_for_llm:
-        logger_nodes.info("No documentation content (Markdown or OpenAPI) found to summarize.")
-        return {"doc_summary": ["Information: No textual documentation or API specs found to summarize."], "error_messages": error_messages}
-
-    llm_service = LLMService()
-    if not llm_service.aclient: # Check if client initialized (API key might be missing)
-        error_msg = "LLMService client not initialized, likely missing OpenAI API key."
-        logger_nodes.error(error_msg)
-        error_messages.append(error_msg)
-        return {"doc_summary": [f"Error: {error_msg}"], "error_messages": error_messages}
-
-    try:
-        logger_nodes.info(f"Requesting summary from LLMService for {len(state.extracted_markdown_docs)} MD docs and {len(openapi_specs_for_llm)} OpenAPI specs.")
-        doc_summary_points = await llm_service.get_llm_summary(
-            markdown_text=full_markdown_text,
-            headings=all_headings,
-            openapi_specs=openapi_specs_for_llm,
-            model_name=settings.OPENAI_MODEL_NAME # Use model from config
-        )
-        if doc_summary_points:
-            logger_nodes.info(f"LLM summary received: {len(doc_summary_points)} bullet points.")
-        else:
-            # get_llm_summary should return a list with an error/warning if it fails internally
-            # but as a fallback if it returns None (e.g. unexpected exception)
-            error_msg = "LLM summarization returned no result."
-            logger_nodes.warning(error_msg)
-            doc_summary_points = [f"Warning: {error_msg}"]
-            error_messages.append(error_msg)
-            
-    except Exception as e:
-        error_msg = f"Error during LLM summarization: {e}"
-        logger_nodes.error(error_msg, exc_info=True)
-        doc_summary_points = [f"Error: {error_msg}"]
-        error_messages.append(error_msg)
-
-    return {
-        "doc_summary": doc_summary_points,
-        "error_messages": error_messages
-    }
-
-
-# --- Rule Engine Helper for Risk Classification ---
-def _apply_risk_classification_rules(
-    doc_summary: Optional[List[str]],
-    code_signals: Optional[CodeSignal]
-) -> Optional[RiskTier]:
-    """
-    Applies a set of rules to classify risk based on documentation summary and code signals.
-    Returns a RiskTier or None if no rule confidently matches.
-    """
-    if not doc_summary and not code_signals:
-        logger_nodes.info("Not enough information for rule-based risk classification.")
-        return None
-
-    summary_text = " ".join(doc_summary).lower() if doc_summary else ""
-    
-    # --- Prohibited Risk Rules ---
-    prohibited_keywords_details = {
-        "social scoring by public authorities": "Social scoring by public authorities.",
-        "real-time remote biometric identification in public spaces for law enforcement": "Real-time remote biometric ID for law enforcement (requires biometric signal).",
-        "subliminal techniques": "Subliminal techniques to distort behavior.",
-        "manipulative ai": "Manipulative or deceptive AI techniques.",
-        "exploiting vulnerabilities": "Exploiting vulnerabilities of specific groups."
-    }
-    for keyword, reason in prohibited_keywords_details.items():
-        if keyword in summary_text:
-            if keyword == "real-time remote biometric identification in public spaces for law enforcement":
-                if code_signals and code_signals.biometric:
-                    logger_nodes.info(f"Rule matched: Prohibited ({reason})")
-                    return RiskTier.PROHIBITED
-            else:
-                logger_nodes.info(f"Rule matched: Prohibited ({reason})")
-                return RiskTier.PROHIBITED
-
-    # --- High Risk Rules ---
-    # Keywords associated with high-risk AI systems when GPAI is involved
-    high_risk_gpai_keywords_details = {
-        "critical infrastructure": "GPAI in critical infrastructure (e.g., transport, energy).",
-        "educational assessment": "GPAI in educational/vocational training assessment.",
-        "vocational training": "GPAI in educational/vocational training access.",
-        "employment management": "GPAI in employment, worker management, recruitment.",
-        "recruitment": "GPAI in recruitment processes.",
-        "worker management": "GPAI in worker management.",
-        "access to essential services": "GPAI for access to essential public/private services (e.g., welfare).",
-        "credit scoring": "GPAI in credit scoring.",
-        "welfare allocation": "GPAI in welfare benefit allocation.",
-        "law enforcement risk assessment": "GPAI for risk assessment in law enforcement.",
-        "polygraph": "GPAI used as or in polygraphs/lie detectors.",
-        "migration management": "GPAI in migration, asylum, border control.",
-        "asylum processing": "GPAI in asylum processing.",
-        "border control": "GPAI in border control management.",
-        "administration of justice": "GPAI in administration of justice.",
-        "democratic process": "GPAI influencing democratic processes."
-    }
-    if code_signals and code_signals.uses_gpai:
-        for keyword, reason in high_risk_gpai_keywords_details.items():
-            if keyword in summary_text:
-                logger_nodes.info(f"Rule matched: High Risk ({reason})")
-                return RiskTier.HIGH
-
-    # Biometric systems (broader than prohibited category)
-    if code_signals and code_signals.biometric:
-        if "biometric identification" in summary_text or "facial recognition" in summary_text or "emotion recognition" in summary_text:
-            # Check if it's not already Prohibited (more specific Prohibited rule for biometrics exists)
-            # This is a simplification; the act has specific categories for high-risk biometrics.
-            logger_nodes.info("Rule matched: High Risk (Biometric identification/categorization system).")
-            return RiskTier.HIGH
-            
-    # --- Limited Risk Rules (Example) ---
-    # If uses GPAI, interacts with humans, and not caught by High/Prohibited rules.
-    # This is a broad simplification for systems like general chatbots or AI content generators.
-    if code_signals and code_signals.uses_gpai:
-        if "chatbot" in summary_text or "generative ai" in summary_text or "generates content" in summary_text or "ai assistant" in summary_text:
-            # This rule should be evaluated after Prohibited and High risk checks for GPAI.
-            # If a GPAI system is for a high-risk purpose, it's High, not Limited.
-            logger_nodes.info("Rule matched: Limited Risk (Interactive GPAI system, e.g., chatbot, content generation, subject to transparency).")
-            return RiskTier.LIMITED
-        
-    # --- Minimal Risk (Default if some info exists but no specific rules matched) ---
-    if doc_summary or (code_signals and (code_signals.biometric or code_signals.live_stream or code_signals.uses_gpai or code_signals.detected_libraries)):
-        # Only classify as minimal if there was *some* indication of AI/data processing, but it didn't hit higher tiers.
-        # If no info at all, we should probably return None/Unknown.
-        logger_nodes.info("Rule matched: Minimal Risk (AI system, but no specific high-impact indicators found by rules).")
-        return RiskTier.MINIMAL
-
-    logger_nodes.info("No specific rules matched confidently for risk classification.")
-    return None # Triggers LLM fallback or sets to UNKNOWN
-
-
+# --- Placeholder for classify_risk_tier_node ---
 async def classify_risk_tier_node(state: ScanGraphState) -> dict:
-    """Classifies the repository's AI risk tier based on rules and LLM fallback."""
-    logger_nodes.info("--- Executing ClassifyRiskTierNode ---")
-    error_messages = list(state.error_messages)
-    determined_tier: Optional[RiskTier] = None
+    logger_nodes.info("--- Executing classify_risk_tier_node (Placeholder) ---")
+    logger_nodes.warning("classify_risk_tier_node is a placeholder. Actual risk classification logic needed.")
+    return {"risk_tier": RiskTier.MINIMAL, "error_messages": list(state.error_messages)}
 
-    # 1. Apply Rule-Based Classification
-    if state.doc_summary is None and state.aggregated_code_signals is None:
-        logger_nodes.info("No document summary or code signals available for risk classification.")
-        determined_tier = RiskTier.UNKNOWN
-    else:
-        determined_tier = _apply_risk_classification_rules(
-            state.doc_summary,
-            state.aggregated_code_signals
-        )
-
-    # 2. LLM Fallback (if rules are not conclusive or no info for rules)
-    if determined_tier is None: # This means rules were inconclusive
-        logger_nodes.info("Rule-based classification inconclusive or insufficient info. Attempting LLM fallback.")
-        llm_service = LLMService()
-        if llm_service.aclient:
-            try:
-                llm_classified_tier_str = await llm_service.classify_risk_with_llm(
-                    state.doc_summary,
-                    state.aggregated_code_signals,
-                    model_name=settings.RISK_CLASSIFICATION_MODEL # Use the risk classification model from config
-                )
-                if llm_classified_tier_str:
-                    try:
-                        determined_tier = RiskTier(llm_classified_tier_str.lower())
-                        logger_nodes.info(f"LLM classified risk as: {determined_tier.value}")
-                    except ValueError:
-                        error_msg = f"LLM returned an invalid risk tier string: '{llm_classified_tier_str}'"
-                        logger_nodes.warning(error_msg)
-                        error_messages.append(error_msg)
-                        determined_tier = RiskTier.UNKNOWN # Fallback if LLM response is weird
-                else:
-                    logger_nodes.warning("LLM did not provide a classification or an error occurred internally in LLMService.")
-                    # If LLMService.classify_risk_with_llm returns None (e.g. API error), it means it couldn't classify.
-                    determined_tier = RiskTier.UNKNOWN
-            except Exception as e:
-                error_msg = f"Error during LLM risk classification call: {e}"
-                logger_nodes.error(error_msg, exc_info=True)
-                error_messages.append(error_msg)
-                determined_tier = RiskTier.UNKNOWN
-        else:
-            error_msg = "LLMService client not available for risk classification fallback."
-            logger_nodes.error(error_msg)
-            error_messages.append(error_msg)
-            determined_tier = RiskTier.UNKNOWN
-        
-        # If still None after LLM attempt (e.g., LLM also failed or returned UNKNOWN effectively)
-        if determined_tier is None:
-            logger_nodes.warning("Risk classification remains undetermined after LLM fallback. Setting to UNKNOWN.")
-            determined_tier = RiskTier.UNKNOWN
-
-    elif determined_tier == RiskTier.MINIMAL and not (state.doc_summary and any(s.strip() for s in state.doc_summary)):
-        # If rules defaulted to MINIMAL but there was actually no doc summary, it's more UNKNOWN
-        logger_nodes.info("Rules defaulted to Minimal, but no doc summary was present. Revising to UNKNOWN.")
-        determined_tier = RiskTier.UNKNOWN
-
-    logger_nodes.info(f"Final determined risk tier: {determined_tier.value if determined_tier else 'None'}")
-
-    return {
-        "risk_tier": determined_tier,
-        "error_messages": error_messages
-    }
-
-# --- Sample Checklist Data ---
-# In a real app, this would likely be loaded from a YAML/JSON file
-COMPLIANCE_CHECKLISTS: Dict[RiskTier, List[Dict[str, Any]]] = {
-    RiskTier.PROHIBITED: [
-        {"id": "PRO-001", "title": "Cease and Desist System Operation", "description": "Systems classified as Prohibited AI are banned. All development and deployment must be halted immediately.", "category": "Operational"},
-        {"id": "PRO-002", "title": "Notify Relevant Authorities", "description": "Report the existence and nature of the prohibited system to national supervisory authorities.", "category": "Legal"}
-    ],
-    RiskTier.HIGH: [
-        {"id": "HIGH-001", "title": "Establish Risk Management System", "description": "Implement a continuous risk management system throughout the AI system's lifecycle.", "category": "Governance"},
-        {"id": "HIGH-002", "title": "Data Governance and Management", "description": "Ensure training, validation, and testing data sets are relevant, representative, free of errors, and complete.", "category": "Data"},
-        {"id": "HIGH-003", "title": "Technical Documentation", "description": "Draw up technical documentation before the system is placed on the market or put into service.", "category": "Documentation"},
-        {"id": "HIGH-004", "title": "Record-Keeping", "description": "Ensure automatic logging of events (record-keeping) for traceability.", "category": "Operational"},
-        {"id": "HIGH-005", "title": "Transparency and Provision of Information to Users", "description": "Design and develop AI systems to ensure their operation is sufficiently transparent to enable users to interpret the system's output and use it appropriately.", "category": "Transparency"},
-        {"id": "HIGH-006", "title": "Human Oversight", "description": "Ensure AI systems are designed and developed to be effectively overseen by natural persons during the period the AI system is in use.", "category": "Oversight"},
-        {"id": "HIGH-007", "title": "Accuracy, Robustness, and Cybersecurity", "description": "Ensure AI systems achieve an appropriate level of accuracy, robustness, and cybersecurity throughout their lifecycle.", "category": "Technical"},
-        {"id": "HIGH-008", "title": "Conformity Assessment", "description": "Undergo a conformity assessment before being placed on the market or put into service.", "category": "Compliance"}
-    ],
-    RiskTier.LIMITED: [
-        {"id": "LIM-001", "title": "Transparency Obligations", "description": "Ensure users are aware they are interacting with an AI system, unless this is obvious from the circumstances.", "category": "Transparency"},
-        {"id": "LIM-002", "title": "Deepfake Disclosure", "description": "If generating or manipulating image, audio, or video content that appreciably resembles existing persons, places or events and would falsely appear to a person to be authentic (deepfakes), disclose that the content has been artificially generated or manipulated.", "category": "Transparency"}
-    ],
-    RiskTier.MINIMAL: [
-        {"id": "MIN-001", "title": "Voluntary Codes of Conduct", "description": "Consider adhering to voluntary codes of conduct for minimal risk AI systems.", "category": "BestPractice"},
-        {"id": "MIN-002", "title": "General Software Best Practices", "description": "Apply standard software development best practices, including security and quality assurance.", "category": "BestPractice"}
-    ],
-    RiskTier.UNKNOWN: [
-        {"id": "UNK-001", "title": "Further Investigation Required", "description": "The risk tier could not be determined. Further investigation and manual assessment are required.", "category": "Assessment"}
-    ]
-}
-
+# --- Placeholder for lookup_checklist_node ---
 async def lookup_checklist_node(state: ScanGraphState) -> dict:
-    """Looks up the compliance checklist based on the determined risk tier."""
-    logger_nodes.info("--- Executing LookupChecklistNode ---")
-    checklist: List[Dict[str, Any]] = []
-    error_messages = list(state.error_messages)
+    logger_nodes.info("--- Executing lookup_checklist_node (Placeholder) ---")
+    logger_nodes.warning("lookup_checklist_node is a placeholder. Actual checklist lookup logic needed.")
+    return {"compliance_checklist": [], "error_messages": list(state.error_messages)}
 
-    if state.risk_tier:
-        logger_nodes.info(f"Looking up checklist for risk tier: {state.risk_tier.value}")
-        checklist = COMPLIANCE_CHECKLISTS.get(state.risk_tier, [])
-        if not checklist and state.risk_tier != RiskTier.UNKNOWN: # UNKNOWN has its own entry
-            logger_nodes.warning(f"No specific checklist found for risk tier '{state.risk_tier.value}', defaulting to empty. This might indicate a missing checklist definition.")
-            # Optionally, assign a default 'further investigation' checklist if not UNKNOWN and not found
-            # checklist = COMPLIANCE_CHECKLISTS.get(RiskTier.UNKNOWN, []) 
-    else:
-        error_msg = "Risk tier not determined, cannot look up checklist."
-        logger_nodes.warning(error_msg)
-        error_messages.append(error_msg)
-        # Default to UNKNOWN checklist if risk_tier itself is None
-        checklist = COMPLIANCE_CHECKLISTS.get(RiskTier.UNKNOWN, [])
-
-    logger_nodes.info(f"Retrieved {len(checklist)} checklist items.")
-
-    return {
-        "checklist": checklist,
-        "error_messages": error_messages
-    }
-
+# --- Placeholder for prepare_final_response_node ---
 async def prepare_final_response_node(state: ScanGraphState) -> dict:
-    """Prepares the final API response from the graph state."""
-    logger_nodes.info("--- Executing PrepareFinalResponseNode ---")
+    logger_nodes.info("--- Executing prepare_final_response_node (Placeholder) ---")
+    logger_nodes.warning("prepare_final_response_node is a placeholder. Actual response preparation logic needed.")
     
-    # Consolidate error messages from the state if they were a list
-    # In the latest ScanGraphState, error_messages is Optional[List[str]]
-    current_error_messages = list(state.error_messages) if state.error_messages else []
-
-    # If critical information is missing, it might be reflected in error_messages or an UNKNOWN tier.
-    # For example, if risk_tier is None, it implies a significant failure earlier in the graph.
-    if state.risk_tier is None and not any("Risk tier not determined" in msg for msg in current_error_messages):
-        current_error_messages.append("Critical error: Risk tier assessment failed or was not performed.")
+    # Use state.code_analysis_score (calculated by calculate_code_analysis_score_node)
+    # instead of trying to derive from state.code_complexity.
+    current_code_analysis_score = state.code_analysis_score if state.code_analysis_score is not None else 0.0
 
     final_response = APIScanResponse(
-        tier=state.risk_tier,
-        checklist=state.checklist,
-        doc_summary=state.doc_summary,
-        evidence_snippets=state.aggregated_code_signals, # Using aggregated_code_signals as evidence
-        error_messages=current_error_messages if current_error_messages else None
+        scan_id=state.scan_id or "unknown_scan_id",
+        repo_url=state.input_model.repo_url if state.input_model else "unknown_repo_url",
+        overall_summary="Placeholder overall summary. Full logic pending.", # Updated placeholder text
+        risk_tier=state.risk_tier or RiskTier.MINIMAL,
+        code_analysis_score=current_code_analysis_score, 
+        detailed_findings=state.checklist if state.checklist else [], # Example: use checklist as detailed_findings
+        recommendations=[], # Placeholder
+        timestamp=datetime.utcnow().isoformat()
     )
-    
-    logger_nodes.info(f"Final API response prepared. Tier: {final_response.tier}")
-    
-    return {"final_api_response": final_response, "error_messages": current_error_messages}
+    # Return with the key 'final_api_response' as expected by graph state/channels
+    return {"final_api_response": final_response, "error_messages": list(state.error_messages)}
 
-async def prepare_persistence_data_node(state: ScanGraphState) -> dict:
-    """Prepares the data to be persisted to the database from the graph state."""
-    logger_nodes.info("--- Executing PreparePersistenceDataNode ---")
-
-    repo_url_to_persist = None
-    if state.input_model.repo_url:
-        repo_url_to_persist = str(state.input_model.repo_url)
-    elif state.repo_info: # Fallback if direct URL not in input_model but repo_info was resolved
-        repo_url_to_persist = f"https://github.com/{state.repo_info.owner}/{state.repo_info.repo}"
-
-    repo_owner = state.repo_info.owner if state.repo_info else None
-    repo_name = state.repo_info.repo if state.repo_info else None
-
-    data_to_persist = ScanPersistenceData(
-        repo_url=repo_url_to_persist,
-        repo_owner=repo_owner,
-        repo_name=repo_name,
-        commit_sha=state.commit_sha,
-        risk_tier=state.risk_tier,
-        checklist=state.checklist,
-        doc_summary=state.doc_summary,
-        # scan_timestamp is handled by default_factory
-        error_messages=state.error_messages if state.error_messages else None
-    )
-
-    logger_nodes.info(f"Data prepared for persistence. Repo: {data_to_persist.repo_url}, Tier: {data_to_persist.risk_tier}")
-
-    return {"persistence_data": data_to_persist}
-
-async def persist_scan_data_node(state: ScanGraphState) -> dict:
-    """Persists the prepared scan data to the database."""
-    logger_nodes.info("--- Executing PersistScanDataNode ---")
-    persisted_id = None
-    new_error_messages = []
-
-    if state.persistence_data:
-        try:
-            logger_nodes.info(f"Attempting to persist data for repo: {state.persistence_data.repo_url}")
-            # Create a new database session
-            async with async_session_factory() as db_session:
-                # Create the scan record
-                scan_record = await create_scan_record(db=db_session, scan_data=state.persistence_data)
-                # Commit the transaction
-                await db_session.commit()
-                persisted_id = scan_record.id
-                logger_nodes.info(f"Scan data persisted successfully. Record ID: {persisted_id}")
-        except Exception as e:
-            error_msg = f"Error persisting scan data: {str(e)}"
-            logger_nodes.error(error_msg, exc_info=True)
-            new_error_messages.append(error_msg)
-    else:
-        error_msg = "Persistence data not found in state. Skipping database persistence."
-        logger_nodes.warning(error_msg)
-        new_error_messages.append(error_msg)
-
-    # Combine new errors with existing ones
-    current_error_messages = list(state.error_messages or [])
-    current_error_messages.extend(new_error_messages)
-
-    return {"persisted_record_id": persisted_id, "error_messages": current_error_messages}
+# --- Placeholder for persist_scan_results_node ---
+async def persist_scan_results_node(state: ScanGraphState) -> dict:
+    logger_nodes.info("--- Executing persist_scan_results_node (Placeholder) ---")
+    logger_nodes.warning("persist_scan_results_node is a placeholder. Actual persistence logic needed.")
+    # Actual logic to save state.final_response_model to DB
+    # Example: await crud_scan_record.update_scan_record_with_results(db_session, state.scan_id, state.final_response_model)
+    return {"error_messages": list(state.error_messages)}

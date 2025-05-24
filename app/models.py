@@ -4,6 +4,7 @@ from datetime import datetime
 import uuid
 from enum import Enum
 from sqlalchemy.ext.asyncio import AsyncSession
+import tempfile
 
 class RepoInfo(BaseModel):
     owner: str
@@ -21,12 +22,27 @@ class RepoInputModel(BaseModel):
             raise ValueError('Either repo_url or repo_details must be provided, but not both.')
         return values
 
-class ChecklistItem(BaseModel):
-    id: str
+# Renamed from ChecklistItem and fields updated
+class ComplianceChecklistItem(BaseModel):
+    item_id: str # Renamed from id
     title: str 
     description: str 
-    reference_article: Optional[str] = None # maps to 'reference' in YAML
-    category_type: Optional[str] = None # maps to 'type' in YAML (e.g. 'general')
+    obligation_id: Optional[str] = None # Added
+    obligation_title: Optional[str] = None # Added
+    assessment_details: Optional[str] = None # Added
+    status: Optional[str] = None # Added (e.g., "pending_assessment", "compliant")
+    evidence_needed: Optional[str] = None # Added
+    risk_level_specific: Optional[List[str]] = None # Changed from Optional[str]
+    reference_article: Optional[str] = None # Kept from original ChecklistItem
+    category_type: Optional[str] = None # Kept from original ChecklistItem
+
+# Added Placeholder for ComplianceObligation
+class ComplianceObligation(BaseModel):
+    id: str
+    title: str
+    description: Optional[str] = None
+    checklist_items: List[ComplianceChecklistItem] = Field(default_factory=list)
+    # Further fields can be added as requirements become clearer
 
 class CodeSignal(BaseModel):
     biometric: bool = False
@@ -98,7 +114,7 @@ class ComplianceAnalysisDetails(BaseModel):
 
 class ScanResultModel(BaseModel):
     tier: str # e.g., 'prohibited', 'high', 'limited', 'minimal'
-    checklist: List[ChecklistItem] # List of objects, each with id, description, tier_category, reference_article
+    checklist: List[ComplianceChecklistItem] # Updated from ChecklistItem
     doc_summary: Optional[List[str]] = Field(default_factory=list) # List of bullet points from LLM
     code_signals: Optional[CodeSignal] = None # Store the Pydantic model instance
     evidence_snippets: Optional[Dict[str, Any]] = Field(default_factory=dict) # Could be code snippets or doc parts
@@ -176,11 +192,19 @@ class RiskTier(str, Enum):
 
 class APIScanResponse(BaseModel):
     """Model for the final JSON response of the graph scan API."""
+    scan_id: Optional[str] = None # Added scan_id
     tier: Optional[RiskTier] = None
     checklist: Optional[List[Dict[str, Any]]] = None
     doc_summary: Optional[List[str]] = None
     detailed_code_violations: Optional[List[CodeViolationDetail]] = Field(default_factory=list)
+    code_analysis_score: Optional[float] = None
     error_messages: Optional[List[str]] = None # Include errors in the response
+
+class ScanCompletedMessage(BaseModel):
+    """Model for the final WebSocket message when a scan is successfully completed."""
+    scan_id: str
+    event_type: str = "scan_completed"
+    data: APIScanResponse
 
 class ScanPersistenceData(BaseModel):
     """Model for data to be persisted to the database after a scan."""
@@ -191,7 +215,7 @@ class ScanPersistenceData(BaseModel):
     risk_tier: Optional[RiskTier] = None # From ScanGraphState
     checklist: Optional[List[Dict[str, Any]]] = None # From ScanGraphState
     doc_summary: Optional[List[str]] = None # For context, might be useful
-    # evidence_snippets: Optional[CodeSignal] = None # Maybe too verbose for main table
+    code_analysis_score: Optional[float] = None
     scan_timestamp: datetime = Field(default_factory=datetime.utcnow)
     error_messages: Optional[List[str]] = None # Errors encountered during the scan
     
@@ -238,26 +262,37 @@ class TaskStatusResponse(BaseModel):
 
 class ScanGraphState(BaseModel):
     """Manages the state of the repository scanning process graph."""
+    scan_id: Optional[str] = None # Added scan_id to be available throughout the graph
     input_model: RepoInputModel
     repo_info: Optional[RepoInfo] = None
     commit_sha: Optional[str] = None
     temp_repo_path: Optional[str] = None
+    repo_local_path: Optional[str] = None # Actual path to the cloned repository content
+    _temp_dir_object: Optional[tempfile.TemporaryDirectory] = None # To manage temp dir lifecycle
     
     discovered_files: Dict[str, List[str]] = Field(default_factory=dict) # e.g., {"markdown": [], "python": []}
+    processed_docs_content: Dict[str, Any] = Field(default_factory=dict) # Added to store generic processed content
     file_content_cache: Dict[str, str] = Field(default_factory=dict) # path -> content
     
     # Processed documentation content
     extracted_markdown_docs: List[Tuple[str, str, List[str]]] = Field(default_factory=list) # (path, text_content, headings)
     parsed_openapi_specs: List[Tuple[str, Dict[str, Any]]] = Field(default_factory=list) # (path, parsed_content)
+    data_governance_doc_findings: Optional[Dict[str, Any]] = None # Stores findings related to data governance documentation
+    transparency_doc_findings: Optional[Dict[str, Any]] = None # Stores findings related to transparency documentation
+    human_oversight_doc_findings: Optional[Dict[str, Any]] = None # Stores findings related to human oversight documentation
     
     doc_summary: Optional[List[str]] = None
     
     # Code analysis outputs
     # Stores CodeAnalysisResult per file path for detailed AST findings
     code_ast_analysis_results: Dict[str, CodeAnalysisResult] = Field(default_factory=dict) 
+    ast_compliance_findings: Optional[Dict[str, List[Dict[str, Any]]]] = Field(default_factory=dict) # For specific compliance signals
+    detailed_code_violations: List[CodeViolationDetail] = Field(default_factory=list)
     grep_search_results: List[Dict[str, Any]] = Field(default_factory=list) # Raw results from grep
     aggregated_code_signals: Optional[CodeSignal] = None # Combined signals from AST and grep
-    
+    code_analysis_score: Optional[float] = None
+    code_complexity: Optional[Dict[str, Any]] = None # Added to store detailed cyclomatic complexity results
+
     # Risk Classification
     risk_tier: Optional[RiskTier] = None
 
@@ -273,7 +308,6 @@ class ScanGraphState(BaseModel):
     final_api_response: Optional[APIScanResponse] = None # This will be populated for the API
     persistence_data: Optional[ScanPersistenceData] = None # Data prepared for persistence
     persisted_record_id: Optional[uuid.UUID] = None # Add field for persisted record ID
-    db_session: Optional[AsyncSession] = Field(default=None, exclude=True) # For DB operations
     error_messages: List[str] = Field(default_factory=list) # Initialize as empty list
     current_node_name: Optional[str] = None # Tracks the current node being executed
     node_outputs: Dict[str, Any] = Field(default_factory=dict) # Stores outputs of each node for debugging/logging

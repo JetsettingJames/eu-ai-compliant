@@ -5,7 +5,7 @@ import uuid
 import logging
 
 from app.db.models.scan_record import ScanRecord
-from app.models import ScanPersistenceData, ScanRecordResponse # Import Pydantic models
+from app.models import ScanPersistenceData, ScanRecordResponse, ComplianceObligation, ComplianceChecklistItem, RiskTier # Import Pydantic models
 from app.services.cache_service import CacheService
 from typing import Optional, List, Dict, Any
 
@@ -198,3 +198,189 @@ async def get_scan_count_by_risk_tier(db: AsyncSession) -> Dict[str, int]:
     await scan_record_cache.set(cache_key, counts)
     
     return counts
+
+async def get_all_obligations_with_checklist_items(db: AsyncSession, risk_tier_categories: Optional[List[str]] = None) -> List[ComplianceObligation]:
+    """Placeholder function to return a hardcoded list of compliance obligations and checklist items."""
+    logger.info("CRUD: Using placeholder get_all_obligations_with_checklist_items")
+    # This is a placeholder. In a real scenario, this would query the database.
+    obligations_data = [
+        {
+            "id": "HUMAN_OVERSIGHT_ART_14",
+            "title": "Human Oversight (Article 14)",
+            "description": "High-risk AI systems shall be designed and developed in such a way...that they can be effectively overseen by natural persons during the period in which the AI system is in use.",
+            "article_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:52021PC0206#d1e1987-1-1",
+            "risk_tier_categories_applies_to": [RiskTier.HIGH.value], # Indicates this obligation primarily applies to HIGH risk
+            "checklist_items": [
+                {
+                    "id": "HO-MEASURES-DESIGN",
+                    "title": "Appropriate human oversight measures",
+                    "description": "Ensure human oversight measures are appropriate to the risks posed by the AI system.",
+                    "assessment_details": "Initial placeholder assessment.",
+                    "status": "pending_assessment",
+                    "evidence_needed": "Design documents, UI/UX specifications showing oversight controls.",
+                    "risk_level_specific": [RiskTier.HIGH.value] # This item is specific to HIGH risk
+                },
+                {
+                    "id": "HO-INTERVENTION-CAPABILITY",
+                    "title": "Human intervention capability",
+                    "description": "Ensure natural persons to whom human oversight is assigned have the necessary competence, training and authority.",
+                    "assessment_details": "Initial placeholder assessment.",
+                    "status": "pending_assessment",
+                    "evidence_needed": "System documentation, operational procedures.",
+                    "risk_level_specific": [RiskTier.HIGH.value]
+                }
+            ]
+        },
+        {
+            "id": "DATA_GOVERNANCE_ART_10",
+            "title": "Data and data governance (Article 10)",
+            "description": "High-risk AI systems which make use of techniques involving the training of models with data shall be developed on the basis of training, validation and testing data sets...",
+            "article_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:52021PC0206#d1e1603-1-1",
+            "risk_tier_categories_applies_to": [RiskTier.HIGH.value, RiskTier.LIMITED.value], # Applies to HIGH and LIMITED
+            "checklist_items": [
+                {
+                    "id": "TD-QUALITY-CRITERIA",
+                    "title": "Training data quality criteria",
+                    "description": "Ensure training, validation, and testing data sets are relevant, representative, free of errors and complete.",
+                    "assessment_details": "Initial placeholder assessment.",
+                    "status": "pending_assessment",
+                    "evidence_needed": "Data sheets, data quality reports, dataset analysis.",
+                    "risk_level_specific": [RiskTier.HIGH.value, RiskTier.LIMITED.value]
+                }
+            ]
+        },
+        {
+            "id": "TRANSPARENCY_ART_13",
+            "title": "Transparency and provision of information to users (Article 13)",
+            "description": "High-risk AI systems shall be designed and developed in such a way to ensure that their operation is sufficiently transparent to enable users to interpret the system’s output and use it appropriately.",
+            "article_url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:52021PC0206#d1e1883-1-1",
+            "risk_tier_categories_applies_to": [RiskTier.HIGH.value, RiskTier.LIMITED.value, RiskTier.MINIMAL.value], # Applies to all
+            "checklist_items": [
+                {
+                    "id": "TP-USER-INFO-OUTPUT",
+                    "title": "User information on output interpretation",
+                    "description": "Provide users with clear and concise information about the AI system's capabilities, limitations, and expected performance to enable them to interpret and use the output appropriately.",
+                    "assessment_details": "Initial placeholder assessment.",
+                    "status": "pending_assessment",
+                    "evidence_needed": "User manuals, system documentation, in-app guidance.",
+                    "risk_level_specific": None # Applies to all tiers this obligation is for
+                }
+            ]
+        }
+    ]
+
+    # Filter obligations based on risk_tier_categories if provided
+    if risk_tier_categories:
+        filtered_obligations_data = []
+        for obl_data in obligations_data:
+            # Include if the obligation applies to any of the requested risk tiers
+            # or if the obligation applies to all tiers (risk_tier_categories_applies_to is None or empty)
+            applies_to = obl_data.get("risk_tier_categories_applies_to")
+            if not applies_to: # If applies_to is not defined, assume it's general
+                filtered_obligations_data.append(obl_data)
+            elif any(tier in applies_to for tier in risk_tier_categories):
+                filtered_obligations_data.append(obl_data)
+        obligations_data_to_process = filtered_obligations_data
+    else:
+        # If no specific risk_tier_categories are requested, return all obligations (or a default set)
+        obligations_data_to_process = obligations_data
+
+    db_obligations: List[ComplianceObligation] = []
+    for obligation_dict in obligations_data_to_process:
+        checklist_items: List[ComplianceChecklistItem] = []
+        for item_dict in obligation_dict.get("checklist_items", []):
+            # Filter checklist items based on risk_tier_categories as well, if item has specific risk levels
+            item_risk_levels = item_dict.get("risk_level_specific")
+            include_item = True # Default to include
+            if risk_tier_categories and item_risk_levels:
+                # Only include if the item is specific to one of the requested risk tiers
+                if not any(tier in item_risk_levels for tier in risk_tier_categories):
+                    include_item = False
+            
+            if include_item:
+                checklist_items.append(ComplianceChecklistItem(
+                    item_id=item_dict["id"],
+                    title=item_dict["title"],
+                    description=item_dict["description"],
+                    obligation_id=obligation_dict["id"],
+                    obligation_title=obligation_dict["title"],
+                    assessment_details=item_dict.get("assessment_details"),
+                    status=item_dict.get("status", "pending_assessment"),
+                    evidence_needed=item_dict.get("evidence_needed"),
+                    risk_level_specific=item_dict.get("risk_level_specific"), # Store as list of strings
+                    reference_article=item_dict.get("reference_article"),
+                    category_type=item_dict.get("category_type")
+                ))
+        
+        # Only add obligation if it has relevant checklist items after filtering
+        if checklist_items:
+            db_obligations.append(ComplianceObligation(
+                id=obligation_dict["id"],
+                title=obligation_dict["title"],
+                description=obligation_dict["description"],
+                article_url=obligation_dict.get("article_url"),
+                risk_tier_categories=obligation_dict.get("risk_tier_categories_applies_to"), # Store as list of strings
+                checklist_items=checklist_items
+            ))
+            
+    return db_obligations
+
+async def update_scan_record_with_results(
+    db: AsyncSession,
+    scan_id: str,
+    risk_tier: Optional[RiskTier],
+    checklist: Optional[List[Dict[str, Any]]],
+    doc_summary: Optional[List[str]],
+    error_messages: Optional[List[str]],
+    # Add other fields from APIScanResponse or state as needed, e.g., code_analysis_score
+    # code_analysis_score: Optional[float] # Example if we decide to store it
+) -> Optional[ScanRecord]:
+    """Update an existing scan record with the final scan results."""
+    try:
+        uuid_obj = uuid.UUID(scan_id) if isinstance(scan_id, str) else scan_id
+        result = await db.execute(select(ScanRecord).filter(ScanRecord.id == uuid_obj))
+        db_scan_record = result.scalars().first()
+
+        if not db_scan_record:
+            logger.warning(f"Scan record with ID {scan_id} not found for update.")
+            return None
+
+        # Update fields
+        if risk_tier is not None:
+            db_scan_record.risk_tier = risk_tier
+        if checklist is not None:
+            db_scan_record.checklist = checklist # Stored as JSON
+        if doc_summary is not None:
+            db_scan_record.doc_summary = doc_summary # Stored as JSON
+        if error_messages is not None:
+            db_scan_record.error_messages = error_messages # Stored as JSON
+        # if code_analysis_score is not None: # Example
+        #     db_scan_record.code_analysis_score = code_analysis_score
+        
+        # The scan_timestamp is set at creation and typically not updated here.
+        # repo_url, owner, name, commit_sha are also set at creation.
+
+        await db.flush() # Apply changes to the session
+        await db.refresh(db_scan_record) # Refresh to get any DB-side changes
+
+        logger.info(f"Successfully updated scan record {scan_id} with results.")
+
+        # Cache invalidation
+        # Invalidate the specific record's cache
+        await scan_record_cache.delete(str(db_scan_record.id))
+        # Invalidate any list caches that might be affected
+        await scan_record_cache.invalidate_pattern("list:*")
+        if db_scan_record.repo_url:
+            await scan_record_cache.invalidate_pattern(f"repo:{db_scan_record.repo_url}:*")
+        
+        return db_scan_record
+
+    except ValueError:
+        logger.warning(f"Invalid UUID format for scan_id: {scan_id} during update.")
+        return None
+    except Exception as e:
+        logger.error(f"Error updating scan record {scan_id}: {str(e)}", exc_info=True)
+        # Depending on transaction handling, a rollback might be needed here
+        # if not handled by the get_db context manager.
+        await db.rollback() # Explicitly rollback on error within this function
+        raise # Re-raise the exception to be handled by the caller or global error handler

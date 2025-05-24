@@ -5,7 +5,7 @@ import os
 from typing import Tuple, Optional, Dict, Any, List
 from datetime import datetime, timezone
 
-from app.models import RepoInputModel, ScanResultModel, ChecklistItem, RepoInfo, CodeSignal, GrepSignalItem, FuzzyMatchResult, RepositoryFile, CodeAnalysisResult, ComplianceAnalysisDetails, TierAnalysis, ComplianceMatch, RiskTier
+from app.models import RepoInputModel, ScanResultModel, ComplianceChecklistItem, RepoInfo, CodeSignal, GrepSignalItem, FuzzyMatchResult, RepositoryFile, CodeAnalysisResult, ComplianceAnalysisDetails, TierAnalysis, ComplianceMatch, RiskTier
 from app.logger import get_logger
 from app.config import settings 
 from app.services.llm_service import LLMService

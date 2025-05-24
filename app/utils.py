@@ -16,16 +16,17 @@ from .config import settings
 
 logger = get_logger(__name__)
 
-async def get_repo_archive_info(repo_info: RepoInfo, token: Optional[str]) -> Tuple[str, str]:
+async def get_repo_archive_info(repo_details_obj: RepoInfo, token: Optional[str]) -> Tuple[str, str, str]:
     """
-    Fetches the target branch name (resolving default if necessary) and its latest commit SHA.
+    Fetches the target branch name (resolving default if necessary), its latest commit SHA,
+    and constructs the archive download URL.
 
     Args:
-        repo_info: RepoInfo object with owner and repo, and optionally branch.
+        repo_details_obj: RepoInfo object with owner and repo, and optionally branch.
         token: GitHub API token.
 
     Returns:
-        A tuple (target_branch_name, commit_sha).
+        A tuple (archive_url, target_branch_name, commit_sha).
     """
     headers = {"Accept": "application/vnd.github.v3+json"}
     if token:
@@ -33,27 +34,27 @@ async def get_repo_archive_info(repo_info: RepoInfo, token: Optional[str]) -> Tu
 
     async with httpx.AsyncClient(headers=headers, timeout=10.0) as client:
         # 1. Determine the branch to use (default or specified)
-        target_branch_name = repo_info.branch
+        target_branch_name = repo_details_obj.branch
         if not target_branch_name:
-            repo_url = f"https://api.github.com/repos/{repo_info.owner}/{repo_info.repo}"
-            logger.info(f"Fetching default branch for {repo_info.owner}/{repo_info.repo} from {repo_url}")
+            repo_url = f"https://api.github.com/repos/{repo_details_obj.owner}/{repo_details_obj.repo}"
+            logger.info(f"Fetching default branch for {repo_details_obj.owner}/{repo_details_obj.repo} from {repo_url}")
             try:
                 response = await client.get(repo_url)
                 response.raise_for_status() # Raise an exception for HTTP errors
                 repo_data = response.json()
                 target_branch_name = repo_data.get("default_branch")
                 if not target_branch_name:
-                    raise ValueError(f"Could not determine default branch for {repo_info.owner}/{repo_info.repo}")
-                logger.info(f"Default branch for {repo_info.owner}/{repo_info.repo} is {target_branch_name}")
+                    raise ValueError(f"Could not determine default branch for {repo_details_obj.owner}/{repo_details_obj.repo}")
+                logger.info(f"Default branch for {repo_details_obj.owner}/{repo_details_obj.repo} is {target_branch_name}")
             except httpx.HTTPStatusError as e:
                 logger.error(f"GitHub API error fetching repo details: {e.response.status_code} - {e.response.text}")
-                raise ValueError(f"Failed to fetch repo details for {repo_info.owner}/{repo_info.repo}: {e.response.status_code}") from e
+                raise ValueError(f"Failed to fetch repo details for {repo_details_obj.owner}/{repo_details_obj.repo}: {e.response.status_code}") from e
             except Exception as e:
                 logger.error(f"Error determining default branch: {e}")
                 raise
 
         # 2. Get the commit SHA for the target branch
-        branch_url = f"https://api.github.com/repos/{repo_info.owner}/{repo_info.repo}/branches/{target_branch_name}"
+        branch_url = f"https://api.github.com/repos/{repo_details_obj.owner}/{repo_details_obj.repo}/branches/{target_branch_name}"
         logger.info(f"Fetching commit SHA for branch '{target_branch_name}' from {branch_url}")
         try:
             response = await client.get(branch_url)
@@ -62,8 +63,12 @@ async def get_repo_archive_info(repo_info: RepoInfo, token: Optional[str]) -> Tu
             commit_sha = branch_data.get("commit", {}).get("sha")
             if not commit_sha:
                 raise ValueError(f"Could not determine commit SHA for branch {target_branch_name}")
-            logger.info(f"Commit SHA for {repo_info.owner}/{repo_info.repo}@{target_branch_name} is {commit_sha}")
-            return target_branch_name, commit_sha
+            logger.info(f"Commit SHA for {repo_details_obj.owner}/{repo_details_obj.repo}@{target_branch_name} is {commit_sha}")
+            
+            archive_download_url = f"https://github.com/{repo_details_obj.owner}/{repo_details_obj.repo}/archive/{commit_sha}.zip"
+            logger.info(f"Archive download URL for {repo_details_obj.owner}/{repo_details_obj.repo}@{commit_sha} is {archive_download_url}")
+            
+            return archive_download_url, target_branch_name, commit_sha
         except httpx.HTTPStatusError as e:
             logger.error(f"GitHub API error fetching branch details: {e.response.status_code} - {e.response.text}")
             raise ValueError(f"Failed to fetch branch details for {target_branch_name}: {e.response.status_code}") from e

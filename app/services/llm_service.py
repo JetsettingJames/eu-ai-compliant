@@ -206,6 +206,155 @@ class LLMService:
             logger_llm.error(f"Error during LLM risk classification API call: {e}", exc_info=True)
             return None # Or RiskTier.UNKNOWN.value depending on desired error handling
 
+    async def get_data_governance_insights(
+        self, 
+        documentation_summary: str, 
+        data_governance_obligations: List[Dict[str, Any]]
+    ) -> Dict[str, str]:
+        """Analyzes documentation summary for evidence of compliance with data governance obligations."""
+        findings: Dict[str, str] = {}
+        if not documentation_summary:
+            logger_llm.warning("Documentation summary is empty. Cannot perform data governance insights analysis.")
+            for obligation in data_governance_obligations:
+                findings[obligation['id']] = "Documentation summary was not available for analysis."
+            return findings
+
+        logger_llm.info(f"Starting data governance insights analysis for {len(data_governance_obligations)} obligations.")
+
+        for obligation in data_governance_obligations:
+            obligation_id = obligation['id']
+            obligation_title = obligation['title']
+            obligation_desc = obligation['description']
+
+            prompt = (
+                f"Review the following AI system documentation summary. Based *only* on this summary, assess if there is evidence addressing the data governance obligation: '{obligation_title} - {obligation_desc}'. "
+                f"Focus specifically on whether the documentation mentions or implies practices, features, or statements that fulfill this point. "
+                f"Provide a concise assessment (1-2 sentences). If no clear evidence is found, state that. Do not infer information beyond what is present in the summary.\n\n"
+                f"Documentation Summary:\n{documentation_summary}\n\n"
+                f"Assessment for obligation '{obligation_id} ({obligation_title})':"
+            )
+
+            try:
+                response = await self.aclient.chat.completions.create(
+                    model=self.SUMMARY_MODEL,  
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1, # Low temperature for factual assessment
+                    max_tokens=150
+                )
+                insight = response.choices[0].message.content.strip() if response.choices else "No response from LLM."
+            except Exception as e:
+                logger_llm.error(f"Error calling LLM for data governance obligation '{obligation_id}': {e}")
+                insight = f"Error during analysis: {e}"
+            
+            findings[obligation_id] = insight
+            logger_llm.info(f"LLM response for DG obligation '{obligation_id}': {insight}")
+        return findings
+
+    async def get_transparency_insights(self, documentation_summary: str, transparency_obligations: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Analyzes documentation summary for evidence of compliance with transparency obligations."""
+        findings: Dict[str, str] = {}
+        if not documentation_summary:
+            logger_llm.warning("Documentation summary is empty. Cannot perform transparency insights analysis.")
+            for obligation in transparency_obligations:
+                findings[obligation['id']] = "Documentation summary was not available for analysis."
+            return findings
+
+        logger_llm.info(f"Starting transparency insights analysis for {len(transparency_obligations)} obligations.")
+        for obligation in transparency_obligations:
+            obligation_id = obligation['id']
+            obligation_title = obligation['title']
+            obligation_desc = obligation['description']
+
+            prompt = (
+                f"Review the following AI system documentation summary. Based *only* on this summary, assess if there is evidence addressing the transparency obligation: '{obligation_title} - {obligation_desc}'. "
+                f"Focus specifically on whether the documentation mentions or implies practices, features, or statements that fulfill this point. "
+                f"Provide a concise assessment (1-2 sentences). If no clear evidence is found, state that. Do not infer information beyond what is present in the summary.\n\n"
+                f"Documentation Summary:\n{documentation_summary}\n\n"
+                f"Assessment for obligation '{obligation_id} ({obligation_title})':"
+            )
+
+            try:
+                response = await self.aclient.chat.completions.create(
+                    model=self.SUMMARY_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1, # Low temperature for factual assessment
+                    max_tokens=150
+                )
+                insight = response.choices[0].message.content.strip() if response.choices else "No response from LLM."
+            except Exception as e:
+                logger_llm.error(f"Error calling LLM for transparency obligation '{obligation_id}': {e}")
+                insight = f"Error during analysis: {e}"
+            
+            findings[obligation_id] = insight
+            logger_llm.info(f"LLM response for TR obligation '{obligation_id}': {insight}")
+        return findings
+
+    async def get_human_oversight_insights(self, documentation_summary: str, human_oversight_obligations: List[Dict[str, Any]]) -> Dict[str, str]:
+        """Analyzes documentation summary for evidence of compliance with human oversight obligations."""
+        findings: Dict[str, str] = {}
+        if not documentation_summary:
+            logger_llm.warning("Documentation summary is empty. Cannot perform human oversight insights analysis.")
+            for obligation in human_oversight_obligations:
+                findings[obligation['id']] = "Documentation summary was not available for analysis."
+            return findings
+
+        logger_llm.info(f"Starting human oversight insights analysis for {len(human_oversight_obligations)} obligations.")
+        for obligation in human_oversight_obligations:
+            obligation_id = obligation['id']
+            obligation_title = obligation['title']
+            obligation_desc = obligation['description']
+
+            prompt = (
+                f"Review the following AI system documentation summary. Based *only* on this summary, assess if there is evidence addressing the human oversight obligation: '{obligation_title} - {obligation_desc}'. "
+                f"Focus specifically on whether the documentation mentions or implies design features, user instructions, or system capabilities that fulfill this point. "
+                f"Provide a concise assessment (1-2 sentences). If no clear evidence is found, state that. Do not infer information beyond what is present in the summary.\n\n"
+                f"Documentation Summary:\n{documentation_summary}\n\n"
+                f"Assessment for obligation '{obligation_id} ({obligation_title})':"
+            )
+
+            try:
+                response = await self.aclient.chat.completions.create(
+                    model=self.SUMMARY_MODEL,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1, # Low temperature for factual assessment
+                    max_tokens=150
+                )
+                insight = response.choices[0].message.content.strip() if response.choices else "No response from LLM."
+            except Exception as e:
+                logger_llm.error(f"Error calling LLM for human oversight obligation '{obligation_id}': {e}")
+                insight = f"Error during analysis: {e}"
+            
+            findings[obligation_id] = insight
+            logger_llm.info(f"LLM response for HO obligation '{obligation_id}': {insight}")
+        return findings
+
+    async def get_risk_tier_classification(self, summary: str, code_analysis_score: Optional[float] = None) -> RiskTier:
+        """Classifies the AI system's risk tier based on its summary and code analysis score."""
+        logger_llm.info(f"Attempting to classify risk tier. Summary (first 100 chars): '{summary[:100]}...', Code score: {code_analysis_score}")
+
+        # classify_risk_with_llm expects a list of strings for summary.
+        # For now, we are not constructing detailed CodeSignal objects here, passing None.
+        # The code_analysis_score is not directly used by classify_risk_with_llm in its current form.
+        # This might be an area for future enhancement if code signals need to be derived from the score.
+        risk_tier_str: Optional[str] = await self.classify_risk_with_llm(
+            doc_summary=[summary] if summary else [], 
+            code_signals=None # Placeholder, as we don't construct CodeSignal object here
+        )
+
+        if risk_tier_str:
+            try:
+                # Convert the string (e.g., "high") to RiskTier enum member (e.g., RiskTier.HIGH)
+                tier_enum = RiskTier(risk_tier_str.lower())
+                logger_llm.info(f"Successfully classified risk tier as: {tier_enum.value}")
+                return tier_enum
+            except ValueError:
+                logger_llm.warning(f"LLM returned a string '{risk_tier_str}' that is not a valid RiskTier value. Defaulting to UNKNOWN.")
+                return RiskTier.UNKNOWN
+        else:
+            logger_llm.warning("classify_risk_with_llm returned None. Defaulting to UNKNOWN risk tier.")
+            return RiskTier.UNKNOWN
+
+
 def _construct_llm_prompt_for_doc_summary(
     markdown_text: str, 
     headings: List[str], 
