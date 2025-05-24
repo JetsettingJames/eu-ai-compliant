@@ -1,0 +1,118 @@
+- id: human_oversight_mechanisms
+  criterion: "Human Oversight Mechanisms"
+  description: "High-risk AI systems should be designed to enable human oversight. This includes measures allowing humans to understand the system's capabilities and limitations, monitor its operation, and intervene or halt the system if necessary."
+  keywords:
+    - "human review"
+    - "manual override"
+    - "human-in-the-loop"
+    - "user intervention"
+    - "human oversight"
+    - "human control"
+    - "stop button"
+    - "emergency stop"
+  relevant_risk_tiers:
+    - "HIGH"
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.py"
+    - "*.js"
+    - "*.java"
+    - "*.cs"
+    - "*.html"
+    - "*.rst"
+    - "*.ipynb"
+
+- id: data_governance_transparency
+  criterion: "Data Governance and Transparency"
+  description: "High-risk AI systems require robust data governance practices, including transparency about data sources, processing, and quality. Training, validation, and testing data sets should be relevant, representative, free of errors, and complete."
+  keywords:
+    - "data source"
+    - "data lineage"
+    - "data processing"
+    - "training data"
+    - "validation data"
+    - "test data"
+    - "data quality"
+    - "data bias"
+    - "data governance"
+    - "data sheet"
+    - "dataset card"
+  relevant_risk_tiers:
+    - "HIGH"
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.py"
+    - "*.ipynb"
+    - "*.json"
+    - "*.yaml"
+    - "*.csv"
+
+- id: ai_system_disclosure
+  criterion: "AI System Interaction Disclosure"
+  description: "Users interacting with an AI system should be informed that they are interacting with AI, unless this is obvious from the circumstances. This applies to systems like chatbots or those generating content."
+  keywords:
+    - "chatbot"
+    - "virtual assistant"
+    - "AI generated"
+    - "automated decision"
+    - "powered by AI"
+    - "this is an AI"
+    - "you are talking to an AI"
+  relevant_risk_tiers:
+    - "LIMITED"
+    - "HIGH"
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.html"
+    - "*.js"
+    - "*.py"
+
+- id: technical_documentation_robustness
+  criterion: "Technical Documentation and Robustness"
+  description: "High-risk AI systems must be accompanied by technical documentation detailing their purpose, capabilities, limitations, and how they meet requirements for accuracy, robustness, and cybersecurity."
+  keywords:
+    - "technical documentation"
+    - "system architecture"
+    - "accuracy assessment"
+    - "robustness testing"
+    - "cybersecurity measures"
+    - "model card"
+    - "system limitations"
+    - "conformity assessment"
+  relevant_risk_tiers:
+    - "HIGH"
+  file_types_to_search:
+    - "*.md"
+    - "*.pdf"
+    - "*.docx"
+    - "*.txt"
+    - "*.rst"
+
+- id: record_keeping_high_risk
+  criterion: "Record Keeping for High-Risk AI Systems"
+  description: "High-risk AI systems must be designed to automatically record events ('logs') relevant for tracing the system's operational history and identifying potential risks or non-compliance. These logs should be secure, accessible for audit, and cover aspects like the period of use, reference database, input data, and system's operational conditions."
+  keywords:
+    - "audit log"
+    - "event log"
+    - "system log"
+    - "traceability"
+    - "record keeping"
+    - "logging mechanism"
+    - "data input log"
+    - "operational history"
+    - "secure log"
+  relevant_risk_tiers:
+    - "HIGH"
+  file_types_to_search:
+    - "*.py"
+    - "*.java"
+    - "*.cs"
+    - "*.go"
+    - "*.rb"
+    - "*.md"
+    - "*.txt"
+    - "*.yaml"
+    - "*.json"

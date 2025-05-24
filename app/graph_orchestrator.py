@@ -11,7 +11,7 @@ from .graph_nodes import (
     analyze_code_complexity_node, # Changed from calculate_code_analysis_score_node
     summarize_documentation_node, # Import the new node
     classify_risk_tier_node, # Import the new node
-    lookup_checklist_node, # Import the new node
+    generate_compliance_checklist_node, # Changed from lookup_checklist_node
     prepare_final_response_node, # Import the new node
     persist_scan_results_node # Import the persistence node
 )
@@ -43,7 +43,7 @@ def get_graph_orchestrator() -> StateGraph:
     graph.add_node("analyze_code_complexity", analyze_code_complexity_node) # Changed node name and function
     graph.add_node("summarize_documentation", summarize_documentation_node) # Add the new node
     graph.add_node("classify_risk_tier", classify_risk_tier_node) # Add the new node
-    graph.add_node("lookup_checklist", lookup_checklist_node) # Add the new node
+    graph.add_node("generate_compliance_checklist", generate_compliance_checklist_node) # Changed from lookup_checklist
     graph.add_node("prepare_final_response", prepare_final_response_node) # Add the new node
     graph.add_node("persist_scan_results", persist_scan_results_node) # Add the persistence node
     
@@ -58,8 +58,8 @@ def get_graph_orchestrator() -> StateGraph:
     graph.add_edge("analyze_python_code", "analyze_code_complexity") # Changed target node
     graph.add_edge("analyze_code_complexity", "summarize_documentation") # Changed source node
     graph.add_edge("summarize_documentation", "classify_risk_tier") # New edge
-    graph.add_edge("classify_risk_tier", "lookup_checklist") # New edge
-    graph.add_edge("lookup_checklist", "prepare_final_response") # UPDATED EDGE
+    graph.add_edge("classify_risk_tier", "generate_compliance_checklist") # Changed target node name
+    graph.add_edge("generate_compliance_checklist", "prepare_final_response") # Changed source node name
     graph.add_edge("prepare_final_response", "persist_scan_results") # Edge to persistence
     graph.add_edge("persist_scan_results", END) # Edge from persistence to END
     

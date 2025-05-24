@@ -22,27 +22,34 @@ class RepoInputModel(BaseModel):
             raise ValueError('Either repo_url or repo_details must be provided, but not both.')
         return values
 
-# Renamed from ChecklistItem and fields updated
-class ComplianceChecklistItem(BaseModel):
-    item_id: str # Renamed from id
-    title: str 
-    description: str 
-    obligation_id: Optional[str] = None # Added
-    obligation_title: Optional[str] = None # Added
-    assessment_details: Optional[str] = None # Added
-    status: Optional[str] = None # Added (e.g., "pending_assessment", "compliant")
-    evidence_needed: Optional[str] = None # Added
-    risk_level_specific: Optional[List[str]] = None # Changed from Optional[str]
-    reference_article: Optional[str] = None # Kept from original ChecklistItem
-    category_type: Optional[str] = None # Kept from original ChecklistItem
+class ComplianceCheckStatus(str, Enum):
+    MET = "MET"
+    NOT_MET = "NOT_MET"
+    PARTIALLY_MET = "PARTIALLY_MET"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    REQUIRES_REVIEW = "REQUIRES_REVIEW" # Indicates evidence found, needs human or LLM review
+    NOT_EVIDENT = "NOT_EVIDENT" # Indicates no direct evidence found via initial scan
+    ERROR_ANALYZING = "ERROR_ANALYZING"
 
-# Added Placeholder for ComplianceObligation
+class ComplianceChecklistItem(BaseModel):
+    id: str = Field(..., description="Unique identifier for the compliance check, e.g., 'data_governance_accuracy'")
+    criterion: str = Field(..., description="The specific compliance criterion being checked.")
+    description: str = Field(..., description="Detailed description of the compliance requirement.")
+    status: ComplianceCheckStatus = Field(default=ComplianceCheckStatus.NOT_EVIDENT, description="Status of the compliance check.")
+    evidence: List[str] = Field(default_factory=list, description="Supporting evidence, e.g., file paths, code snippets, or LLM reasoning excerpts.")
+    details: Optional[str] = Field(None, description="Further details or justification for the status.")
+    llm_assessment_prompt: Optional[str] = Field(None, description="Prompt used if LLM assessment was performed.")
+    relevant_risk_tiers: List['RiskTier'] = Field(default_factory=list, description="Risk tiers for which this check is most relevant.")
+
 class ComplianceObligation(BaseModel):
-    id: str
-    title: str
+    """
+    Placeholder for ComplianceObligation.
+    This was causing an ImportError in graph_nodes.py.
+    TODO: Remove this and the import in graph_nodes.py once edit_file tool is fixed or the model is properly defined/removed.
+    """
+    id: Optional[str] = None
+    name: Optional[str] = None
     description: Optional[str] = None
-    checklist_items: List[ComplianceChecklistItem] = Field(default_factory=list)
-    # Further fields can be added as requirements become clearer
 
 class CodeSignal(BaseModel):
     biometric: bool = False
@@ -194,11 +201,14 @@ class APIScanResponse(BaseModel):
     """Model for the final JSON response of the graph scan API."""
     scan_id: Optional[str] = None # Added scan_id
     tier: Optional[RiskTier] = None
-    checklist: Optional[List[Dict[str, Any]]] = None
+    checklist: Optional[List[ComplianceChecklistItem]] = Field(default_factory=list, description="Detailed compliance checklist results.")
     doc_summary: Optional[List[str]] = None
     detailed_code_violations: Optional[List[CodeViolationDetail]] = Field(default_factory=list)
     code_analysis_score: Optional[float] = None
     error_messages: Optional[List[str]] = None # Include errors in the response
+    risk_classification_justification: Optional[str] = None # Added for LLM justification
+    recommendations: Optional[List[str]] = Field(default_factory=list, description="Actionable recommendations based on the scan.")
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat(), description="Timestamp of when the scan response was generated.")
 
 class ScanCompletedMessage(BaseModel):
     """Model for the final WebSocket message when a scan is successfully completed."""
@@ -213,12 +223,13 @@ class ScanPersistenceData(BaseModel):
     repo_name: Optional[str] = None # From RepoInfo
     commit_sha: Optional[str] = None # From ScanGraphState
     risk_tier: Optional[RiskTier] = None # From ScanGraphState
-    checklist: Optional[List[Dict[str, Any]]] = None # From ScanGraphState
+    checklist: Optional[List[ComplianceChecklistItem]] = None # Updated type
     doc_summary: Optional[List[str]] = None # For context, might be useful
     code_analysis_score: Optional[float] = None
     scan_timestamp: datetime = Field(default_factory=datetime.utcnow)
     error_messages: Optional[List[str]] = None # Errors encountered during the scan
-    
+    risk_classification_justification: Optional[str] = None # Added for LLM justification
+
     @validator('repo_url', pre=True, always=True)
     def set_repo_url_from_input(cls, v, values):
         input_model = values.get('input_model') # Assuming input_model might be passed or available
@@ -275,7 +286,7 @@ class ScanGraphState(BaseModel):
     file_content_cache: Dict[str, str] = Field(default_factory=dict) # path -> content
     
     # Processed documentation content
-    extracted_markdown_docs: List[Tuple[str, str, List[str]]] = Field(default_factory=list) # (path, text_content, headings)
+    extracted_markdown_docs: List[Dict[str, Any]] = Field(default_factory=list) # Changed from List[Tuple[str, str, List[str]]]
     parsed_openapi_specs: List[Tuple[str, Dict[str, Any]]] = Field(default_factory=list) # (path, parsed_content)
     data_governance_doc_findings: Optional[Dict[str, Any]] = None # Stores findings related to data governance documentation
     transparency_doc_findings: Optional[Dict[str, Any]] = None # Stores findings related to transparency documentation
@@ -295,6 +306,9 @@ class ScanGraphState(BaseModel):
 
     # Risk Classification
     risk_tier: Optional[RiskTier] = None
+    risk_classification_justification: Optional[str] = None # Added for LLM justification
+    compliance_checklist: Optional[List[ComplianceChecklistItem]] = None # Updated type
+    criterion_grep_results: Optional[Dict[str, List[Dict[str, Any]]]] = None # Added to store grep results for checklist generation
 
     # Data prepared for vector store
     repository_files_for_embedding: List[RepositoryFile] = Field(default_factory=list)
@@ -302,7 +316,6 @@ class ScanGraphState(BaseModel):
     # Status flags and intermediate results
     embedding_upsert_status: Dict[str, bool] = Field(default_factory=dict)
     fuzzy_matches: List[FuzzyMatchResult] = Field(default_factory=list)
-    checklist: Optional[List[Dict[str, Any]]] = None
     
     # Final output and operational tracking
     final_api_response: Optional[APIScanResponse] = None # This will be populated for the API
