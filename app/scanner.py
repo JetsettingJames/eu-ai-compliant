@@ -757,7 +757,7 @@ async def scan_repo(input_data: RepoInputModel, scan_id: Optional[str] = None, w
         )
         
         logger.info(f"Scan complete. Tier: {determined_tier}. Fuzzy matches: {len(all_fuzzy_matches)}. Final result: {scan_result.model_dump_json(indent=2, exclude_none=True)}")
-        await _send_ws_progress(ws_manager, scan_id, "completed", "Scan completed successfully.", {"tier": determined_tier, "result_summary": scan_result.model_dump(exclude_none=True, mode='json')})
+        await _send_ws_progress(ws_manager, scan_id, "scan_completed", "Scan completed successfully.", scan_result.model_dump(exclude_none=True, mode='json'))
         return scan_result
 
     except Exception as inner_e: # Exception handler for the INNER try block (core scanning steps)

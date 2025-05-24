@@ -30,6 +30,7 @@ class ComplianceCheckStatus(str, Enum):
     REQUIRES_REVIEW = "REQUIRES_REVIEW" # Indicates evidence found, needs human or LLM review
     NOT_EVIDENT = "NOT_EVIDENT" # Indicates no direct evidence found via initial scan
     ERROR_ANALYZING = "ERROR_ANALYZING"
+    NEEDS_REVIEW = "NEEDS_REVIEW" # Similar to REQUIRES_REVIEW, but for items identified by code signals
 
 class ComplianceChecklistItem(BaseModel):
     id: str = Field(..., description="Unique identifier for the compliance check, e.g., 'data_governance_accuracy'")
@@ -200,6 +201,7 @@ class RiskTier(str, Enum):
 class APIScanResponse(BaseModel):
     """Model for the final JSON response of the graph scan API."""
     scan_id: Optional[str] = None # Added scan_id
+    overall_summary: Optional[str] = None # Added overall summary field
     tier: Optional[RiskTier] = None
     checklist: Optional[List[ComplianceChecklistItem]] = Field(default_factory=list, description="Detailed compliance checklist results.")
     doc_summary: Optional[List[str]] = None
@@ -325,3 +327,17 @@ class ScanGraphState(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+class ComplianceCriterion(BaseModel):
+    id: str
+    criterion: str
+    description: str
+    keywords: List[str]
+    relevant_risk_tiers: List[str] # e.g., ["HIGH", "LIMITED"]
+    file_types_to_search: List[str] # Glob patterns for file types
+    triggered_by_code_categories: Optional[List[str]] = Field(default_factory=list) # NEW FIELD
+
+class Obligation(BaseModel):
+    id: str
+    name: str
+    description: str

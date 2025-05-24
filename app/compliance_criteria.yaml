@@ -12,6 +12,13 @@
     - "emergency stop"
   relevant_risk_tiers:
     - "HIGH"
+  triggered_by_code_categories:
+    - "biometric_processing"
+    - "safety_critical_control"
+    - "predictive_analytics_law_enforcement"
+    - "emotion_recognition"
+    - "critical_decision_making_employment"
+    - "critical_decision_making_essential_services"
   file_types_to_search:
     - "*.md"
     - "*.txt"
@@ -40,6 +47,10 @@
     - "dataset card"
   relevant_risk_tiers:
     - "HIGH"
+  triggered_by_code_categories:
+    - "data_processing"
+    - "data_storage"
+    - "data_transmission"
   file_types_to_search:
     - "*.md"
     - "*.txt"
@@ -63,12 +74,15 @@
   relevant_risk_tiers:
     - "LIMITED"
     - "HIGH"
+  triggered_by_code_categories:
+    - "gpai" # General AI that might interact
+    - "emotion_recognition" # If used in interactive systems
+    - "generative_ai_media_manipulation" # For generated content
   file_types_to_search:
     - "*.md"
     - "*.txt"
     - "*.html"
     - "*.js"
-    - "*.py"
 
 - id: technical_documentation_robustness
   criterion: "Technical Documentation and Robustness"
@@ -84,6 +98,10 @@
     - "conformity assessment"
   relevant_risk_tiers:
     - "HIGH"
+  triggered_by_code_categories:
+    - "system_development"
+    - "system_testing"
+    - "system_deployment"
   file_types_to_search:
     - "*.md"
     - "*.pdf"
@@ -106,6 +124,12 @@
     - "secure log"
   relevant_risk_tiers:
     - "HIGH"
+  triggered_by_code_categories:
+    - "biometric_processing"
+    - "safety_critical_control"
+    - "predictive_analytics_law_enforcement"
+    - "critical_decision_making_employment"
+    - "critical_decision_making_essential_services"
   file_types_to_search:
     - "*.py"
     - "*.java"
@@ -116,3 +140,62 @@
     - "*.txt"
     - "*.yaml"
     - "*.json"
+
+- id: prohibited_biometric_identification_public_spaces
+  criterion: "Prohibition of Real-Time Remote Biometric Identification in Publicly Accessible Spaces for Law Enforcement"
+  description: "The EU AI Act prohibits the use of ‘real-time’ remote biometric identification systems in publicly accessible spaces for the purpose of law enforcement, subject to narrow exceptions."
+  keywords:
+    - "real-time biometric"
+    - "public space surveillance"
+    - "facial recognition public"
+    - "law enforcement biometrics"
+  relevant_risk_tiers: # This is a prohibition, so it applies regardless of a calculated tier
+    - "PROHIBITED" # Or could be all tiers to ensure it's always checked if signals appear
+    - "HIGH"
+    - "LIMITED"
+    - "MINIMAL"
+  triggered_by_code_categories:
+    - "biometric_processing"
+    - "surveillance_and_monitoring"
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.py"
+
+- id: transparency_for_emotion_recognition_systems
+  criterion: "Transparency Obligations for Emotion Recognition and Biometric Categorisation Systems"
+  description: "Providers of emotion recognition systems or biometric categorisation systems must ensure transparency. Individuals exposed to such systems must be informed of their operation."
+  keywords:
+    - "emotion detection disclosure"
+    - "biometric categorization notice"
+    - "informing users emotion AI"
+  relevant_risk_tiers:
+    - "LIMITED" # Typically a Limited Risk transparency obligation
+    - "HIGH" # Could also be part of a High-Risk system
+  triggered_by_code_categories:
+    - "emotion_recognition"
+    - "biometric_processing" # If used for categorization beyond simple ID
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.html"
+    - "*.js" # For web interfaces
+
+- id: deep_fake_transparency
+  criterion: "Transparency of AI systems that generate or manipulate image, audio or video content (Deep Fakes)"
+  description: "Users interacting with AI-generated or manipulated content (deep fakes) that appears authentic must be informed that the content is artificially generated or manipulated, with some exceptions for legitimate purposes (e.g., parody, art)."
+  keywords:
+    - "deep fake disclosure"
+    - "AI generated content notice"
+    - "synthetic media label"
+    - "manipulated content warning"
+  relevant_risk_tiers:
+    - "LIMITED"
+    - "HIGH"
+  triggered_by_code_categories:
+    - "generative_ai_media_manipulation"
+  file_types_to_search:
+    - "*.md"
+    - "*.txt"
+    - "*.html"
+    - "*.js" # For web interfaces

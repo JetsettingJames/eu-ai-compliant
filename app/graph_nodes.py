@@ -7,6 +7,7 @@ from .models import (
     CodeAnalysisResult, CodeSignal, RiskTier, APIScanResponse,
     ScanPersistenceData, CodeViolationDetail, ComplianceObligation, ComplianceChecklistItem,
     RepositoryFile, FuzzyMatchResult,
+    ComplianceCriterion, # Added this line
     # ComplianceStatus, # This was already here, good.
     ComplianceCheckStatus # Added this line
 )
@@ -47,52 +48,89 @@ logger_nodes = get_logger(__name__)
 # Path to the compliance criteria configuration file
 COMPLIANCE_CRITERIA_PATH = Path(__file__).parent / "compliance_criteria.yaml"
 
-def load_compliance_criteria() -> List[Dict[str, Any]]:
-    """Loads compliance criteria from the YAML configuration file."""
+def load_compliance_criteria() -> List[ComplianceCriterion]:
+    """Loads compliance criteria from the YAML configuration file and parses them into ComplianceCriterion models."""
     try:
         with open(COMPLIANCE_CRITERIA_PATH, 'r') as f:
-            criteria_data = yaml.safe_load(f)
+            raw_criteria_data = yaml.safe_load(f)
         
-        # Convert relevant_risk_tiers strings to RiskTier enum members
-        for criterion in criteria_data:
-            if 'relevant_risk_tiers' in criterion and isinstance(criterion['relevant_risk_tiers'], list):
-                criterion['relevant_risk_tiers'] = [
-                    RiskTier[tier_str.upper()] for tier_str in criterion['relevant_risk_tiers']
-                    if tier_str.upper() in RiskTier.__members__
-                ]
-            else:
-                # Default to all risk tiers if not specified or malformed, or handle as an error
-                criterion['relevant_risk_tiers'] = list(RiskTier)
-                logger_nodes.warning(
-                    f"Risk tiers for criterion '{criterion.get('id', 'Unknown')}' are missing, malformed, or not a list. Defaulting to all tiers."
-                )
-        return criteria_data
+        parsed_criteria: List[ComplianceCriterion] = []
+        if not isinstance(raw_criteria_data, list):
+            logger_nodes.error(f"Compliance criteria YAML content is not a list. Path: {COMPLIANCE_CRITERIA_PATH}")
+            return []
+
+        for i, criterion_dict in enumerate(raw_criteria_data):
+            if not isinstance(criterion_dict, dict):
+                logger_nodes.warning(f"Item at index {i} in compliance_criteria.yaml is not a dictionary. Skipping.")
+                continue
+            try:
+                # Pydantic will automatically handle 'triggered_by_code_categories' using its default if not present
+                # It will also validate other fields.
+                criterion_model = ComplianceCriterion(**criterion_dict)
+                parsed_criteria.append(criterion_model)
+            except ValidationError as e_val:
+                logger_nodes.error(f"Validation error for criterion at index {i} ('{criterion_dict.get('id', 'N/A')}') in compliance_criteria.yaml: {e_val}")
+            except Exception as e_item:
+                logger_nodes.error(f"Error parsing criterion at index {i} ('{criterion_dict.get('id', 'N/A')}') in compliance_criteria.yaml: {e_item}")
+        
+        logger_nodes.info(f"Successfully loaded and parsed {len(parsed_criteria)} compliance criteria.")
+        return parsed_criteria
     except FileNotFoundError:
         logger_nodes.error(f"Compliance criteria file not found at {COMPLIANCE_CRITERIA_PATH}. Returning empty criteria list.")
         return []
-    except yaml.YAMLError as e:
-        logger_nodes.error(f"Error parsing compliance criteria YAML file: {e}. Returning empty criteria list.")
+    except yaml.YAMLError as e_yaml:
+        logger_nodes.error(f"Error parsing YAML in {COMPLIANCE_CRITERIA_PATH}: {e_yaml}. Returning empty criteria list.")
         return []
-    except KeyError as e:
-        logger_nodes.error(f"Invalid RiskTier string in compliance_criteria.yaml: {e}. Please check the 'relevant_risk_tiers' values.")
-        return [] # Or raise an error / return partially loaded if appropriate
     except Exception as e:
         logger_nodes.error(f"An unexpected error occurred while loading compliance criteria: {e}. Returning empty criteria list.")
         return []
 
-# INITIAL_COMPLIANCE_CRITERIA is now loaded from the YAML file
-# This variable will be populated by calling load_compliance_criteria()
-# We can load it once when the module is imported, or within the node itself.
-# For simplicity in a graph context where nodes might re-initialize, loading it inside the node or 
-# ensuring it's loaded globally once and available is key.
-# Let's load it globally for now for simplicity, assuming this module is imported once.
-INITIAL_COMPLIANCE_CRITERIA = load_compliance_criteria()
+# Load compliance criteria once when the module is imported
+# This makes it available to all nodes without reloading, assuming graph_nodes.py is imported once.
+INITIAL_COMPLIANCE_CRITERIA: List[ComplianceCriterion] = load_compliance_criteria()
 
-# --- Sensitive Library Definitions for AST Analysis ---
+# Define categories of sensitive libraries that might indicate specific compliance obligations
+# or risk areas. The key is the policy category, and the value is a list of module names.
 SENSITIVE_LIBRARIES_CONFIG = {
-    "biometric": ["face_recognition", "cv2", "dlib", "mediapipe"], 
-    "live_stream": ["websockets", "socketio", "aiohttp", "kafka", "pika", "rtsp", "webrtc"], 
-    "gpai": ["transformers", "tensorflow", "torch", "keras", "openai", "anthropic", "langchain", "google.generativeai"]
+    "gpai": [  # General Purpose AI & Foundational Models
+        "transformers", "tensorflow", "tf", "torch", "pytorch", "keras", "scikit-learn", "sklearn",
+        "openai", "anthropic", "langchain", "google.generativeai", "vertexai", "cohere",
+        "sentence_transformers", "gensim", "spacy", "nltk"
+    ],
+    "biometric_processing": [ # Biometric identification, categorization
+        "face_recognition", "deepface", "cv2", "dlib", "retinaface", "mediapipe",
+        "pykaldi" # for speech/speaker recognition
+    ],
+    "emotion_recognition": [ # Inferring emotions, intentions from various data types
+        "fer", "deepface", "nrclex", "vaderSentiment", "text2emotion", "emopy", "speechbrain"
+    ],
+    "surveillance_and_monitoring": [ # Broad surveillance capabilities, object tracking, activity recognition
+        "yolov5", "yolov7", "yolov8", "detectron2", "cv2", # Object detection often used in surveillance
+        "pyshark", "scapy", # Network traffic analysis if used for monitoring individuals
+        "deepstream"
+    ],
+    "predictive_analytics_law_enforcement": [ # Predictive policing, risk assessment for recidivism
+        # Often custom, but might use general ML libs from 'gpai' or specific graph analysis
+        "networkx", # If used for social network analysis in this context
+        "geopandas" # If used for hotspot mapping
+    ],
+    "critical_decision_making_employment": [ # Recruitment, promotion, termination, task allocation
+        # Often custom or SaaS, underlying tech might use common NLP/ML libs from 'gpai'
+        # This category might require more than just import scanning in the future.
+    ],
+    "critical_decision_making_essential_services": [ # Credit scoring, insurance, access to public benefits
+        # Often custom, but might use general ML libs from 'gpai'
+        "xgboost", "lightgbm", "catboost" # Common in financial/risk modeling
+    ],
+    "safety_critical_control": [ # AI controlling critical infrastructure, robotics, autonomous vehicles
+        "dronekit", "pyro", "roslibpy", "carla", "airsim"
+    ],
+    "generative_ai_media_manipulation": [ # Deepfakes, synthetic media generation
+        "stylegan", "wav2lip", "faceswap", "deepfacelab"
+    ]
+    # "social_scoring": [], # Placeholder - often context-dependent
+    # "dark_patterns": [],  # Placeholder - more about UI/UX patterns than specific libs
+    # "manipulative_ai": [], # Placeholder - often overlaps with emotion/persuasion, context is key
 }
 
 _ALL_SENSITIVE_IMPORTS_SET = set()
@@ -1033,300 +1071,268 @@ async def generate_compliance_checklist_node(state: ScanGraphState) -> dict:
     local_error_messages = list(state.error_messages or []) # Ensure initialization with a list
     
     checklist: List[ComplianceChecklistItem] = []
-    repo_path = state.repo_local_path
-    criterion_grep_results_map = state.criterion_grep_results if state.criterion_grep_results is not None else {}
+    added_criterion_ids = set() # To avoid duplicate checklist items
 
-    if not repo_path: # Keep this check for sanity
+    if not state.repo_local_path:
         logger_nodes.error("Repository path not found in state. Skipping compliance checklist generation.")
         return {"compliance_checklist": checklist, "error_messages": local_error_messages + ["Repository path missing for checklist generation"]}
 
-    current_risk_tier = state.risk_tier if state.risk_tier is not None else RiskTier.UNKNOWN
+    current_risk_tier_value = state.risk_tier.value if state.risk_tier is not None else RiskTier.UNKNOWN.value
+    logger_nodes.info(f"Current risk tier for checklist generation: {current_risk_tier_value}")
 
-    # Load compliance criteria from the state, which was loaded by initial_setup_node
-    compliance_criteria = state.compliance_criteria
-    if not compliance_criteria:
-        logger_nodes.error("Compliance criteria not found in state. Cannot generate checklist.")
+    all_compliance_criteria = INITIAL_COMPLIANCE_CRITERIA # Using the globally loaded Pydantic models
+    if not all_compliance_criteria:
+        logger_nodes.error("INITIAL_COMPLIANCE_CRITERIA is empty. Cannot generate checklist.")
         return {
             "compliance_checklist": checklist, 
-            "error_messages": local_error_messages + ["Compliance criteria missing in state for checklist generation"]
+            "error_messages": local_error_messages + ["Initial compliance criteria not loaded or empty."]
         }
 
-    # Debug log for compliance_criteria structure
-    if isinstance(compliance_criteria, list) and compliance_criteria:
-        logger_nodes.info(f"Compliance criteria: type={type(compliance_criteria)}, count={len(compliance_criteria)}, first_item_type={type(compliance_criteria[0])}")
-        if not isinstance(compliance_criteria[0], dict):
-            logger_nodes.warning(f"First item in compliance_criteria is not a dict: {compliance_criteria[0]}")
-    elif isinstance(compliance_criteria, list):
-        logger_nodes.info("Compliance criteria is an empty list.")
-    else:
-        logger_nodes.warning(f"Compliance criteria is not a list: type={type(compliance_criteria)}, value={compliance_criteria}")
-
-    # Initialize LLM for deeper analysis if needed. Ensure OPENAI_API_KEY is set.
-    llm_for_analysis = None
+    llm_for_analysis = None # Initialize outside the loop
     try:
         llm_for_analysis = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.1, openai_api_key=settings.OPENAI_API_KEY)
         logger_nodes.info("LLM for compliance checklist analysis initialized.")
     except Exception as e:
         err_msg = f"Failed to initialize ChatOpenAI for checklist analysis: {e}. LLM-based review will be skipped."
         logger_nodes.error(err_msg)
-        local_error_messages.append(err_msg) # Append to local_error_messages
+        local_error_messages.append(err_msg)
 
-    for criterion_def in compliance_criteria:
-        if not isinstance(criterion_def, dict):
-            malformed_msg = f"Skipping malformed compliance criterion: item is not a dictionary. Data: {criterion_def}"
-            logger_nodes.error(malformed_msg)
-            local_error_messages.append(malformed_msg)
+    for criterion_model in all_compliance_criteria:
+        if not isinstance(criterion_model, ComplianceCriterion):
+            logger_nodes.warning(f"Skipping item in compliance_criteria, not a ComplianceCriterion model: {criterion_model}")
             continue
 
-        item_id = criterion_def.get("id")
-        criterion_text = criterion_def.get("criterion") or criterion_def.get("title")
-        description_text = criterion_def.get("description", "No description provided.")
+        criterion_id = criterion_model.id
+        criterion_title = criterion_model.criterion
 
-        if not item_id or not criterion_text:
-            malformed_msg = f"Skipping malformed compliance criterion: missing 'id' or primary text (tried 'criterion' and 'title'). Data: {criterion_def}"
-            logger_nodes.error(malformed_msg)
-            local_error_messages.append(malformed_msg)
-            continue
+        # 1. Check relevance by risk tier
+        is_relevant_for_tier = current_risk_tier_value in criterion_model.relevant_risk_tiers
+        logger_nodes.debug(f"Criterion '{criterion_id}': Relevant for current tier '{current_risk_tier_value}'? {is_relevant_for_tier}. (Criterion tiers: {criterion_model.relevant_risk_tiers})")
 
-        # Convert relevant_risk_tiers from strings (from JSON) to RiskTier enum members
-        criterion_relevant_risk_tiers_str = criterion_def.get("relevant_risk_tiers", [])
-        criterion_relevant_risk_tiers_enum: List[RiskTier] = []
-        if isinstance(criterion_relevant_risk_tiers_str, list):
-            for tier_str in criterion_relevant_risk_tiers_str:
-                try:
-                    if isinstance(tier_str, str):
-                        criterion_relevant_risk_tiers_enum.append(RiskTier[tier_str.upper()])
-                    elif isinstance(tier_str, RiskTier): # Already an enum (e.g. if loaded from YAML via old path)
-                        criterion_relevant_risk_tiers_enum.append(tier_str)
-                    else:
-                        logger_nodes.warning(f"Invalid type for risk tier '{tier_str}' in criterion '{item_id}'. Expected str or RiskTier.")
-                except KeyError:
-                    logger_nodes.warning(f"Invalid risk tier string '{tier_str}' in criterion '{item_id}' after uppercasing. Not a valid RiskTier member.")
-        else:
-            logger_nodes.warning(f"'relevant_risk_tiers' for criterion '{item_id}' is not a list or is missing. Defaulting to empty list.")
-
-        # --- BEGIN ADDED DEBUG LOGGING ---
-        logger_nodes.info(f"DEBUG ChecklistItem Gen for '{item_id}': Source relevant_risk_tiers (str): {criterion_relevant_risk_tiers_str}")
-        logger_nodes.info(f"DEBUG ChecklistItem Gen for '{item_id}': Processed relevant_risk_tiers (enum): {[tier.value for tier in criterion_relevant_risk_tiers_enum]}")
-        # --- END ADDED DEBUG LOGGING ---
-
-        # Only check criteria relevant to the determined risk tier, or if risk tier is UNKNOWN (check all initially)
-        if current_risk_tier != RiskTier.UNKNOWN and current_risk_tier not in criterion_relevant_risk_tiers_enum:
-            item = ComplianceChecklistItem(
-                id=item_id,
-                criterion=criterion_text, # Use safe variable
-                description=description_text, # Use safe variable
-                status=ComplianceCheckStatus.NOT_APPLICABLE,
-                details=f"Not applicable for the current determined risk tier: {current_risk_tier.value}",
-                relevant_risk_tiers=[tier.value for tier in criterion_relevant_risk_tiers_enum]
-            )
-            checklist.append(item)
-            continue
-
-        logger_nodes.info(f"Processing compliance criterion ID '{item_id}': {criterion_text}") # Use safe variables
-        found_evidence_for_criterion = []
-        overall_status_for_criterion = ComplianceCheckStatus.NOT_EVIDENT
-        details_message = "No direct keyword evidence found via initial scan."
-
-        # 1. Process Grep Search Results
-        grep_matches = criterion_grep_results_map.get(item_id)
-        if grep_matches is None:
-            logger_nodes.warning(f"Grep results not found in state for criterion ID: {item_id}. Marking as error for analysis.")
-            overall_status_for_criterion = ComplianceCheckStatus.ERROR_ANALYZING
-            details_message = f"Grep search results were not available for criterion '{criterion_text}'. Analysis could not be performed."
-        elif isinstance(grep_matches, list) and not grep_matches:
-            # No grep matches, status remains NOT_EVIDENT for now (might be updated by fuzzy matching)
-            details_message = f"No keyword matches found via grep for '{criterion_text}'."
-        elif isinstance(grep_matches, list) and grep_matches:
-            overall_status_for_criterion = ComplianceCheckStatus.REQUIRES_REVIEW
-            details_message = f"Keyword evidence found via grep for '{criterion_text}'. Further review recommended."
-            for match in grep_matches:
-                if isinstance(match, dict) and all(k in match for k in ["File", "LineNumber", "LineContent"]):
-                    evidence_str = f"[Grep Match] Found in {match.get('File', 'N/A')}:{match.get('LineNumber', 'N/A')}: {str(match.get('LineContent', 'N/A'))[:200]}..."
-                    found_evidence_for_criterion.append(evidence_str)
-                else:
-                    logger_nodes.warning(f"Malformed grep match for criterion {item_id}: {match}")
-                    found_evidence_for_criterion.append(f"[Grep Match] Malformed match data: {str(match)[:200]}...")
-            if not found_evidence_for_criterion and overall_status_for_criterion == ComplianceCheckStatus.REQUIRES_REVIEW:
-                overall_status_for_criterion = ComplianceCheckStatus.NOT_EVIDENT
-                details_message = f"Keyword matches via grep were reported for '{criterion_text}', but evidence details could not be extracted."
-        else:
-            logger_nodes.error(f"Unexpected data type for grep_matches for criterion ID: {item_id}. Type: {type(grep_matches)}. Marking as error.")
-            overall_status_for_criterion = ComplianceCheckStatus.ERROR_ANALYZING
-            details_message = f"Internal error: Unexpected format for grep search results for criterion '{criterion_text}'."
-
-        # 2. Process Fuzzy Matching Results
-        project_fuzzy_matches = state.fuzzy_matches if state.fuzzy_matches is not None else []
-        criterion_fuzzy_matches_found = False
-        if isinstance(project_fuzzy_matches, list):
-            for fuzzy_match in project_fuzzy_matches:
-                if hasattr(fuzzy_match, 'criterion_id') and fuzzy_match.criterion_id == item_id:
-                    criterion_fuzzy_matches_found = True
-                    evidence_str = (
-                        f"[Fuzzy Match] File: {getattr(fuzzy_match, 'file_path', 'N/A')}, "
-                        f"Line: {getattr(fuzzy_match, 'line_number', 'N/A')}, "
-                        f"Keyword: '{getattr(fuzzy_match, 'keyword_found', 'N/A')}', "
-                        f"Matched Text: '{getattr(fuzzy_match, 'original_text_matched', 'N/A')}', "
-                        f"Score: {getattr(fuzzy_match, 'score', 'N/A')}. "
-                        f"Content: {str(getattr(fuzzy_match, 'line_content', 'N/A'))[:150]}..."
-                    )
-                    found_evidence_for_criterion.append(evidence_str)
-            
-            if criterion_fuzzy_matches_found:
-                if overall_status_for_criterion == ComplianceCheckStatus.NOT_EVIDENT:
-                    overall_status_for_criterion = ComplianceCheckStatus.REQUIRES_REVIEW
-                    details_message = f"Fuzzy matches found for '{criterion_text}' (no direct grep matches). Further review recommended."
-                elif overall_status_for_criterion == ComplianceCheckStatus.REQUIRES_REVIEW:
-                    # Already requires review from grep, add to details
-                    details_message += " Fuzzy matches also found, providing additional context."
-                # If ERROR_ANALYZING, fuzzy matches don't change that primary status but are still recorded as evidence.
-        else:
-            logger_nodes.warning("state.fuzzy_matches is not a list or is missing. Skipping fuzzy match processing.")
-
-        # --- LLM Analysis for items requiring review ---
-        if overall_status_for_criterion == ComplianceCheckStatus.REQUIRES_REVIEW and llm_for_analysis:
-            logger_nodes.info(f"Performing LLM analysis for criterion: {criterion_text} (ID: {item_id})")
-            
-            # Consolidate evidence for the LLM. For a real case, we might fetch more context around each grep match.
-            # For now, just join the line contents.
-            context_for_llm = "\n".join([ev.split(": ", 1)[1] if ": " in ev else ev for ev in found_evidence_for_criterion])
-            
-            if not context_for_llm.strip():
-                logger_nodes.warning(f"No context extracted from grep evidence for LLM analysis of {item_id}. Skipping LLM step.")
-            else:
-                llm_prompt_template_text = (
-                    "You are an AI compliance analyst specializing in the EU AI Act. "
-                    "Review the following text snippets found in a software project's files. These snippets are potential evidence related to the compliance criterion: '{criterion_title}'.\n\n"
-                    "Criterion Description: {criterion_description}\n\n"
-                    "Evidence Snippets:\n"
-                    "'''{evidence_context}'''\n\n"
-                    "Based *only* on the provided snippets and the criterion description, assess if the evidence suggests compliance. "
-                    "Output your assessment strictly in the following format (no preambles or explanations before or after this structure):\n"
-                    "Status: [MET|NOT_MET|PARTIALLY_MET|REQUIRES_REVIEW]\n"
-                    "Justification: [Your concise justification for the status, explaining how the snippets support or fail to support the criterion. If the snippets are insufficient for a definitive judgment, explain why and maintain REQUIRES_REVIEW.]"
-                )
-                
-                prompt = PromptTemplate(
-                    input_variables=["criterion_title", "criterion_description", "evidence_context"],
-                    template=llm_prompt_template_text
-                )
-                
-                chain = prompt | llm_for_analysis | StrOutputParser()
-                llm_assessment_prompt_str = prompt.format(criterion_title=criterion_text, criterion_description=description_text, evidence_context=context_for_llm)
-
-                try:
-                    logger_nodes.info(f"  Invoking LLM for {item_id} with {len(found_evidence_for_criterion)} pieces of evidence.")
-                    # In a real LangGraph setup, this might be a separate node or a tool call.
-                    # For now, direct call within the node for simulation.
-                    llm_response_str = await chain.ainvoke({
-                        "criterion_title": criterion_text,
-                        "criterion_description": description_text,
-                        "evidence_context": context_for_llm
-                    })
-                    logger_nodes.info(f"  LLM raw response for {item_id}: {llm_response_str}")
-
-                    # Parse LLM response
-                    # Expecting format: "Status: [STATUS]\nJustification: [TEXT]"
-                    lines = llm_response_str.strip().split('\n')
-                    parsed_llm_status = None
-                    parsed_llm_justification = "LLM assessment did not yield a parseable justification."
-                    
-                    response_lines = llm_response_str.strip().split('\n')
-                    for line in response_lines:
-                        if line.lower().startswith("status:"):
-                            status_val = line.split(":", 1)[1].strip().upper()
-                            try:
-                                parsed_llm_status = ComplianceCheckStatus[status_val]
-                            except KeyError:
-                                logger_nodes.warning(f"LLM returned an invalid status '{status_val}' for {item_id}. Retaining REQUIRES_REVIEW.")
-                                parsed_llm_status = ComplianceCheckStatus.REQUIRES_REVIEW # Fallback
-                        elif line.lower().startswith("justification:"):
-                            parsed_llm_justification = line.split(":", 1)[1].strip()
-                    
-                    if parsed_llm_status:
-                        overall_status_for_criterion = parsed_llm_status
-                        details_message = f"LLM Assessment: {parsed_llm_justification}" # Override previous details
-                        # Optionally, append LLM justification to existing evidence or store separately
-                        found_evidence_for_criterion.append(f"LLM Justification: {parsed_llm_justification}")
-                    else:
-                        details_message += " | LLM assessment parsing failed. Original grep review status retained."
-                        logger_nodes.warning(f"Failed to parse LLM status for {item_id}. Response: {llm_response_str}")
-
-                except Exception as llm_exc:
-                    logger_nodes.error(f"Error during LLM analysis for {item_id}: {llm_exc}")
-                    details_message += f" | LLM analysis failed: {str(llm_exc)}"
-                    # Status remains REQUIRES_REVIEW from grep if LLM fails
+        # 2. Check relevance by code violation categories
+        is_relevant_by_code_category = False
+        if state.detailed_code_violations and criterion_model.triggered_by_code_categories:
+            for violation in state.detailed_code_violations:
+                if violation.policy_category in criterion_model.triggered_by_code_categories:
+                    is_relevant_by_code_category = True
+                    logger_nodes.info(f"Criterion '{criterion_id}' triggered by code violation category '{violation.policy_category}'.")
+                    break 
         
-        # --- BEGIN ADDED DEBUG LOGGING (before final item creation) ---
-        logger_nodes.info(f"DEBUG Final ChecklistItem for '{item_id}': Source relevant_risk_tiers (str): {criterion_relevant_risk_tiers_str}")
-        logger_nodes.info(f"DEBUG Final ChecklistItem for '{item_id}': Processed relevant_risk_tiers (enum values to be used): {[tier.value for tier in criterion_relevant_risk_tiers_enum]}")
-        # --- END ADDED DEBUG LOGGING ---
+        if not (is_relevant_for_tier or is_relevant_by_code_category):
+            logger_nodes.debug(f"Criterion '{criterion_id}' is not relevant by tier or code category. Skipping.")
+            continue
 
-        item = ComplianceChecklistItem(
-            id=item_id,
-            criterion=criterion_text, # Use safe variable
-            description=description_text, # Use safe variable
-            status=overall_status_for_criterion,
-            evidence=found_evidence_for_criterion,
-            details=details_message,
-            relevant_risk_tiers=[tier.value for tier in criterion_relevant_risk_tiers_enum]
+        if criterion_id in added_criterion_ids:
+            logger_nodes.debug(f"Criterion '{criterion_id}' already added to checklist. Skipping duplicate.")
+            continue
+
+        # Determine status and gather evidence for this criterion
+        # (This part of the logic needs to be adapted from the original function, using criterion_model)
+        current_status = ComplianceCheckStatus.NOT_EVIDENT # Default, changed from NOT_ASSESSED
+        evidence_summary = "No specific evidence gathered for this item yet. Status defaults to NOT_EVIDENT."
+        supporting_documentation: List[str] = []
+        code_references: List[str] = [] # Ensure this will store strings
+
+        # Initialize lists to hold references for the current criterion
+        # supporting_documentation: List[str] = []
+        # code_references: List[str] = [] # Ensure this will store strings
+        # evidence_summary = "No specific evidence found or summarized programmatically."
+        # current_status = ComplianceCheckStatus.NOT_EVIDENT # Default status
+
+        # --- Populate supporting_documentation (ensure strings) ---
+        # Example for human_oversight_doc_findings (adapt for others if necessary)
+        if criterion_id in (state.human_oversight_doc_findings or {}):
+            finding = state.human_oversight_doc_findings[criterion_id]
+            if isinstance(finding, dict) and 'summary' in finding:
+                supporting_documentation.append(f"Human Oversight Doc Finding ({criterion_id}): {finding['summary']}")
+            elif isinstance(finding, str):
+                supporting_documentation.append(f"Human Oversight Doc Finding ({criterion_id}): {finding}")
+            else:
+                supporting_documentation.append(f"Human Oversight Doc Finding ({criterion_id}): {str(finding)}")
+        
+        # (Add similar blocks for data_governance_doc_findings and transparency_doc_findings if they contribute)
+        # For example:
+        if criterion_id in (state.data_governance_doc_findings or {}):
+            finding = state.data_governance_doc_findings[criterion_id]
+            # Convert finding to string appropriately
+            supporting_documentation.append(f"Data Governance Doc Finding ({criterion_id}): {str(finding)}")
+
+        if criterion_id in (state.transparency_doc_findings or {}):
+            finding = state.transparency_doc_findings[criterion_id]
+            # Convert finding to string appropriately
+            supporting_documentation.append(f"Transparency Doc Finding ({criterion_id}): {str(finding)}")
+
+
+        # --- Populate code_references (ensure strings) ---
+        # Check if this criterion is triggered by any code violation categories
+        code_categories_for_criterion = getattr(criterion_model, 'triggered_by_code_categories', [])
+        if code_categories_for_criterion and state.detailed_code_violations:
+            triggered_by_code_violation = False
+            for violation in state.detailed_code_violations:
+                if violation.policy_category in code_categories_for_criterion:
+                    # Convert CodeViolationDetail object to a descriptive string
+                    violation_str = (
+                        f"Code Violation: {violation.policy_category} in '{violation.file_path}' (line {violation.line_number}). "
+                        f"Description: {violation.description}. Code: '{violation.violating_code or 'N/A'}'"
+                    )
+                    code_references.append(violation_str)
+                    triggered_by_code_violation = True
+            if triggered_by_code_violation:
+                evidence_summary = "Code violations found related to this criterion. Review needed."
+                logger_nodes.info(f"DIAGNOSTIC (Block 1 Entry): About to access ComplianceCheckStatus. ID: {id(ComplianceCheckStatus)}, Type: {type(ComplianceCheckStatus)}")
+                try:
+                    logger_nodes.info(f"DIAGNOSTIC (Block 1 - Inside Try): dir(ComplianceCheckStatus): {dir(ComplianceCheckStatus)}")
+                    status_to_assign = ComplianceCheckStatus.NEEDS_REVIEW
+                    logger_nodes.info(f"DIAGNOSTIC (Block 1): Successfully accessed ComplianceCheckStatus.NEEDS_REVIEW. Value: {status_to_assign}")
+                    current_status = status_to_assign
+                    logger_nodes.info(f"DIAGNOSTIC (Block 1): Successfully assigned to current_status.")
+                except AttributeError as e_block1:
+                    logger_nodes.error(f"DIAGNOSTIC (Block 1): AttributeError accessing ComplianceCheckStatus.NEEDS_REVIEW: {e_block1}")
+                    logger_nodes.error(f"DIAGNOSTIC (Block 1 - Inside Except): dir(ComplianceCheckStatus) after error: {dir(ComplianceCheckStatus)}")
+                    logger_nodes.error(f"DIAGNOSTIC (Block 1): ComplianceCheckStatus at error: ID: {id(ComplianceCheckStatus)}, Type: {type(ComplianceCheckStatus)}")
+                    raise
+        if code_references and current_status == ComplianceCheckStatus.NOT_EVIDENT:
+             evidence_summary = "Code signals relevant to this criterion were detected. Manual review recommended."
+             logger_nodes.info(f"DIAGNOSTIC (Block 2 Entry): About to access ComplianceCheckStatus. ID: {id(ComplianceCheckStatus)}, Type: {type(ComplianceCheckStatus)}")
+             try:
+                 logger_nodes.info(f"DIAGNOSTIC (Block 2 - Inside Try): dir(ComplianceCheckStatus): {dir(ComplianceCheckStatus)}")
+                 status_to_assign = ComplianceCheckStatus.NEEDS_REVIEW
+                 logger_nodes.info(f"DIAGNOSTIC (Block 2): Successfully accessed ComplianceCheckStatus.NEEDS_REVIEW. Value: {status_to_assign}")
+                 current_status = status_to_assign
+                 logger_nodes.info(f"DIAGNOSTIC (Block 2): Successfully assigned to current_status.")
+             except AttributeError as e_block2:
+                 logger_nodes.error(f"DIAGNOSTIC (Block 2): AttributeError accessing ComplianceCheckStatus.NEEDS_REVIEW: {e_block2}")
+                 logger_nodes.error(f"DIAGNOSTIC (Block 2 - Inside Except): dir(ComplianceCheckStatus) after error: {dir(ComplianceCheckStatus)}")
+                 logger_nodes.error(f"DIAGNOSTIC (Block 2): ComplianceCheckStatus at error: ID: {id(ComplianceCheckStatus)}, Type: {type(ComplianceCheckStatus)}")
+                 raise
+
+        logger_nodes.info(f"DIAGNOSTIC (2): Type of ComplianceCheckStatus: {type(ComplianceCheckStatus)}")
+        logger_nodes.info(f"DIAGNOSTIC (2): Members of ComplianceCheckStatus: {[member.name for member in ComplianceCheckStatus]}")
+
+        # Prepare evidence list by ensuring all components are strings
+        final_evidence_strings: List[str] = []
+        
+        # Process supporting_documentation
+        for item in (supporting_documentation or []):
+            if not isinstance(item, str):
+                logger_nodes.warning(f"Item in supporting_documentation is not a string (type: {type(item)}). Converting to string: {str(item)[:100]}...")
+                final_evidence_strings.append(str(item))
+            else:
+                final_evidence_strings.append(item)
+        
+        # Process code_references
+        for item in (code_references or []):
+            if not isinstance(item, str):
+                logger_nodes.warning(f"Item in code_references is not a string (type: {type(item)}). Converting to string: {str(item)[:100]}...")
+                final_evidence_strings.append(str(item))
+            else:
+                final_evidence_strings.append(item)
+        
+        evidence_list = final_evidence_strings # Use the explicitly stringified list
+
+        # Prepare details string
+        details_parts = []
+        if evidence_summary:
+            details_parts.append(evidence_summary.strip())
+        # Add the suggestion previously in suggestions_for_improvement
+        details_parts.append("Further review may be needed based on findings.")
+        details_str = " ".join(details_parts).strip()
+        if not details_str: # Ensure details is None if empty, not an empty string
+            details_str = None
+
+        # Prepare relevant_risk_tiers list from criterion_model
+        model_relevant_tiers = []
+        if hasattr(criterion_model, 'relevant_risk_tiers') and criterion_model.relevant_risk_tiers:
+            for tier_str in criterion_model.relevant_risk_tiers:
+                try:
+                    # Assuming RiskTier enum members are uppercase, e.g., RiskTier.HIGH
+                    model_relevant_tiers.append(RiskTier[tier_str.strip().upper()])
+                except KeyError:
+                    logger_nodes.warning(f"Unknown risk tier string '{tier_str}' in criterion '{criterion_id}' relevant_risk_tiers. Skipping.")
+                    local_error_messages.append(f"Unknown risk tier string '{tier_str}' for criterion '{criterion_id}'.")
+
+        # Create the checklist item
+        checklist_item = ComplianceChecklistItem(
+            id=criterion_id,  # Changed from criterion_id
+            criterion=criterion_title,  # Changed from criterion_text
+            description=criterion_model.description,
+            status=current_status,
+            evidence=evidence_list, # Consolidated field
+            details=details_str, # Consolidated field
+            relevant_risk_tiers=model_relevant_tiers # Populated from criterion_model
+            # llm_assessment_prompt is optional and not set here by default
         )
-        checklist.append(item)
+        checklist.append(checklist_item)
+        added_criterion_ids.add(criterion_id)
+        logger_nodes.info(f"Added criterion '{criterion_id}' to checklist. Status: {current_status}")
 
     logger_nodes.info(f"Generated compliance checklist with {len(checklist)} items.")
-    for item in checklist:
-        logger_nodes.debug(f"  Item: {item.id}, Status: {item.status.value}")
+    return {"compliance_checklist": checklist, "error_messages": local_error_messages}
 
-    return {
-        "compliance_checklist": checklist,
-        "error_messages": local_error_messages
-    }
 
-# --- Placeholder for lookup_checklist_node (if it was meant to be separate or was removed, ensure correct structure)
-# Note: The diff showed lookup_checklist_node was removed. If it's needed, it should be re-added or confirmed removed.
-# For now, focusing on fixing generate_compliance_checklist_node and then the rest of the file structure.
-
-# --- Placeholder for prepare_final_response_node ---
 async def prepare_final_response_node(state: ScanGraphState) -> dict:
     logger_nodes.info("--- Executing prepare_final_response_node ---")
     logger_nodes.info(f"prepare_final_response_node: state.risk_tier is {state.risk_tier} (type: {type(state.risk_tier)})") # ADDED LOG
     logger_nodes.info(f"prepare_final_response_node: state.compliance_checklist length is {len(state.compliance_checklist if state.compliance_checklist else [])}") # ADDED LOG
     logger_nodes.info(f"prepare_final_response_node: state.risk_classification_justification is '{state.risk_classification_justification}'") # ADDED LOG
 
+    # Comprehensive initial state logging
+    logger_nodes.info(f"prepare_final_response_node initial state: scan_id='{state.scan_id}'")
+    logger_nodes.info(f"prepare_final_response_node initial state: risk_tier='{state.risk_tier}' (type: {type(state.risk_tier)})")
+    if state.compliance_checklist:
+        logger_nodes.info(f"prepare_final_response_node initial state: compliance_checklist length={len(state.compliance_checklist)}, first_item_type={type(state.compliance_checklist[0]) if state.compliance_checklist else 'N/A'}")
+        # Log details of the first checklist item's relevant_risk_tiers for debugging
+        if state.compliance_checklist and isinstance(state.compliance_checklist[0], ComplianceChecklistItem):
+            first_item_tiers = state.compliance_checklist[0].relevant_risk_tiers
+            logger_nodes.info(f"prepare_final_response_node initial state: first checklist item relevant_risk_tiers='{[tier.value for tier in first_item_tiers]}' (type: {type(first_item_tiers)})")
+    else:
+        logger_nodes.info("prepare_final_response_node initial state: compliance_checklist is None or empty")
+    if state.doc_summary:
+        logger_nodes.info(f"prepare_final_response_node initial state: doc_summary length={len(state.doc_summary)}, first_item_type={type(state.doc_summary[0]) if state.doc_summary else 'N/A'}")
+    else:
+        logger_nodes.info("prepare_final_response_node initial state: doc_summary is None or empty")
+    logger_nodes.info(f"prepare_final_response_node initial state: risk_classification_justification='{state.risk_classification_justification}'")
+    logger_nodes.info(f"prepare_final_response_node initial state: code_analysis_score='{state.code_analysis_score}'")
+    if state.detailed_code_violations:
+        logger_nodes.info(f"prepare_final_response_node initial state: detailed_code_violations length={len(state.detailed_code_violations)}, first_item_type={type(state.detailed_code_violations[0]) if state.detailed_code_violations else 'N/A'}")
+    else:
+        logger_nodes.info("prepare_final_response_node initial state: detailed_code_violations is None or empty")
+    logger_nodes.info(f"prepare_final_response_node initial state: error_messages='{state.error_messages}'")
+
     # Ensure default values if parts of the state are not populated
     scan_id = state.scan_id or "unknown_scan_id"
     repo_url = state.input_model.repo_url if state.input_model else "unknown_repo_url"
-    risk_tier = state.risk_tier or RiskTier.UNKNOWN # Default if not set
-    risk_justification = state.risk_classification_justification or "Justification not available."
-    code_analysis_score = state.code_analysis_score if state.code_analysis_score is not None else 0.0
-    # detailed_findings = state.compliance_checklist if state.compliance_checklist else [] # Using compliance_checklist as detailed_findings
-    # For now, let's keep detailed_findings as a placeholder or a more generic list
-    detailed_findings = [] # Placeholder, to be populated by actual findings later
-    if state.compliance_checklist:
-        detailed_findings.extend(state.compliance_checklist)
     
+    risk_tier_to_assign = state.risk_tier or RiskTier.UNKNOWN # Default if not set
+    checklist_to_assign = state.compliance_checklist if state.compliance_checklist is not None else []
+    doc_summary_to_assign = state.doc_summary if state.doc_summary is not None else []
+    risk_justification_to_assign = state.risk_classification_justification or "Justification not available."
+    code_analysis_score_to_assign = state.code_analysis_score if state.code_analysis_score is not None else 0.0
+    detailed_code_violations_to_assign = state.detailed_code_violations if state.detailed_code_violations is not None else []
+    error_messages_to_assign = list(state.error_messages or [])
+
     # Construct a more meaningful overall summary
     overall_summary = f"Scan completed for {repo_url}. "
-    overall_summary += f"The system has been preliminarily classified as {risk_tier.value} risk. "
-    if risk_justification != "Justification not available." and risk_justification != "No documentation provided for analysis." and risk_justification != "Classification failed or pending." and risk_justification != "Could not parse LLM response accurately." and not risk_justification.startswith("LLM initialization failed") and not risk_justification.startswith("An error occurred during classification"):
-        overall_summary += f"Justification: {risk_justification} "
-    overall_summary += f"Code analysis score: {code_analysis_score:.2f}."
+    overall_summary += f"The system has been preliminarily classified as {risk_tier_to_assign.value} risk. "
+    if risk_justification_to_assign not in ["Justification not available.", "No documentation provided for analysis.", "Classification failed or pending.", "Could not parse LLM response accurately."] and not risk_justification_to_assign.startswith("LLM initialization failed") and not risk_justification_to_assign.startswith("An error occurred during classification"):
+        overall_summary += f"Justification: {risk_justification_to_assign} "
+    overall_summary += f"Code analysis score: {code_analysis_score_to_assign:.2f}."
 
     final_response = APIScanResponse(
         scan_id=scan_id,
-        repo_url=repo_url,
         overall_summary=overall_summary, # Updated placeholder text
-        risk_tier=risk_tier,
-        risk_classification_justification=risk_justification, # Added field
-        code_analysis_score=code_analysis_score, 
-        detailed_code_violations=state.detailed_code_violations if state.detailed_code_violations else [],
-        # detailed_findings=detailed_findings, # Placeholder for now, can use compliance_checklist
+        tier=risk_tier_to_assign, # Ensure this uses the processed value and correct field name
+        checklist=checklist_to_assign, # Ensure this uses the processed value
+        doc_summary=doc_summary_to_assign, # Ensure this uses the processed value
+        risk_classification_justification=risk_justification_to_assign, # Added field
+        code_analysis_score=code_analysis_score_to_assign, 
+        detailed_code_violations=detailed_code_violations_to_assign,
         recommendations=[], # Placeholder
         timestamp=datetime.utcnow().isoformat(),
-        error_messages=state.error_messages if state.error_messages else []
+        error_messages=error_messages_to_assign
     )
-    logger_nodes.info(f"Prepared final response: {final_response.model_dump_json(indent=2)}")
-    return {"final_api_response": final_response, "error_messages": list(state.error_messages or [])}
+    logger_nodes.info(f"Prepared final response model: {final_response.model_dump_json(indent=2)}")
+    return {"final_api_response": final_response, "error_messages": error_messages_to_assign}
 
 
 # --- Placeholder for persist_scan_results_node ---
