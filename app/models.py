@@ -218,6 +218,10 @@ class ScanCompletedMessage(BaseModel):
 
 class ScanPersistenceData(BaseModel):
     """Model for data to be persisted to the database after a scan."""
+    scan_id: uuid.UUID # Added
+    user_id: Optional[str] = None # Added, to be populated by persist_scan_results_node
+    status: Optional[str] = None # Added, e.g., "completed", "failed"
+    
     repo_url: Optional[str] = None # From RepoInputModel or RepoInfo
     repo_owner: Optional[str] = None # From RepoInfo
     repo_name: Optional[str] = None # From RepoInfo
@@ -229,14 +233,7 @@ class ScanPersistenceData(BaseModel):
     scan_timestamp: datetime = Field(default_factory=datetime.utcnow)
     error_messages: Optional[List[str]] = None # Errors encountered during the scan
     risk_classification_justification: Optional[str] = None # Added for LLM justification
-
-    @validator('repo_url', pre=True, always=True)
-    def set_repo_url_from_input(cls, v, values):
-        input_model = values.get('input_model') # Assuming input_model might be passed or available
-        if input_model and input_model.repo_url:
-            return str(input_model.repo_url)
-        return v
-
+    final_response_json: Optional[Dict[str, Any]] = None # Added to store the full API response
 
 class ScanRecordResponse(BaseModel):
     """Response model for scan records retrieved from the database."""

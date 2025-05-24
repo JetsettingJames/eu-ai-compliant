@@ -1205,24 +1205,49 @@ async def persist_scan_results_node(state: ScanGraphState) -> dict:
         logger_nodes.error("Final API response is missing. Cannot persist results.")
         return {"error_messages": list(state.error_messages or []) + ["Final API response missing for persistence"]}
 
+    repo_url_str = None
+    repo_owner_str = None
+    repo_name_str = None
+
+    if state.input_model:
+        if state.input_model.repo_url:
+            repo_url_str = str(state.input_model.repo_url)
+        if state.input_model.repo_details:
+            repo_owner_str = state.input_model.repo_details.owner
+            repo_name_str = state.input_model.repo_details.repo
+            # If repo_url wasn't in input_model directly but details were, construct it (example)
+            if not repo_url_str and repo_owner_str and repo_name_str:
+                 repo_url_str = f"https://github.com/{repo_owner_str}/{repo_name_str}" # Assuming GitHub
+    elif state.repo_info: # Fallback to repo_info if input_model is not detailed enough
+        repo_owner_str = state.repo_info.owner
+        repo_name_str = state.repo_info.repo
+        if repo_owner_str and repo_name_str:
+            repo_url_str = f"https://github.com/{repo_owner_str}/{repo_name_str}" # Assuming GitHub
+
+    # Determine user_id (currently not in RepoInputModel, so defaults to anonymous)
+    # If user_id were added to RepoInputModel: user_id = state.input_model.user_id if state.input_model and hasattr(state.input_model, 'user_id') else "anonymous"
+    user_id_str = "anonymous" # Placeholder until user_id is properly sourced
+
     try:
         persistence_data = ScanPersistenceData(
-            scan_id=state.scan_id,
-            user_id=state.input_model.user_id if state.input_model and state.input_model.user_id else "anonymous",
-            repo_url=state.input_model.repo_url if state.input_model else "unknown_repo_url",
-            scan_timestamp=datetime.utcnow(), # Or from state.final_api_response.timestamp if preferred
-            status="completed", # Assuming completion if this node is reached
-            risk_tier=state.risk_tier, # From state after classification
-            risk_classification_justification=state.risk_classification_justification, # From state
+            scan_id=state.scan_id, # Now a field in ScanPersistenceData
+            user_id=user_id_str, # Now a field in ScanPersistenceData
+            status="completed", # Now a field in ScanPersistenceData, assuming completion
+            repo_url=repo_url_str if repo_url_str else "unknown_repo_url",
+            repo_owner=repo_owner_str,
+            repo_name=repo_name_str,
+            commit_sha=state.commit_sha,
+            scan_timestamp=state.final_api_response.timestamp if state.final_api_response.timestamp else datetime.utcnow(),
+            risk_tier=state.risk_tier,
+            risk_classification_justification=state.risk_classification_justification,
             code_analysis_score=state.code_analysis_score,
-            # Store the entire final response as JSON for easy retrieval/rehydration
-            final_response_json=state.final_api_response.model_dump(), 
-            # Populate other fields as necessary from state or final_api_response
-            # e.g., extracted_files_count, summarized_docs_count, etc.
-            # For now, focusing on the core elements related to recent changes.
+            checklist=state.compliance_checklist, # Added checklist
+            doc_summary=state.doc_summary, # Added doc_summary
+            final_response_json=state.final_api_response.model_dump() if state.final_api_response else None, # Now a field
             error_messages=state.error_messages if state.error_messages else []
         )
 
+        logger_nodes.info(f"Prepared data for persistence: {persistence_data.model_dump_json(indent=2)}")
         logger_nodes.info(f"Prepared data for persistence: {persistence_data.model_dump_json(indent=2)}")
 
         # Placeholder for actual database interaction
@@ -1232,13 +1257,19 @@ async def persist_scan_results_node(state: ScanGraphState) -> dict:
         #     await crud_scan_record.create_or_update_scan_persistence_data(db_session, persistence_data)
         
         # For now, we can store it in the state if that's useful for testing or if no DB is connected
-        # state.scan_persistence_data = persistence_data 
+        # state.persistence_data = persistence_data # Corrected attribute name to match ScanGraphState
 
     except Exception as e:
-        logger_nodes.error(f"Error preparing data for persistence: {e}")
-        return {"error_messages": list(state.error_messages or []) + [f"Persistence preparation error: {e}"]}
+        error_msg = f"Error preparing/persisting data: {e}"
+        logger_nodes.error(error_msg, exc_info=True)
+        # It's crucial to return a dict that includes 'error_messages' for graph state update
+        current_errors = list(state.error_messages or [])
+        current_errors.append(error_msg)
+        return {"error_messages": current_errors, "persistence_data": None} # Ensure all expected keys are present if node modifies them
 
-    return {"error_messages": list(state.error_messages or [])} # Return current error messages
+    # If successful, ensure persistence_data is part of the output if the graph expects it
+    # And ensure error_messages reflects the current state (empty if no new errors)
+    return {"error_messages": list(state.error_messages or []), "persistence_data": persistence_data}
 
 
 # Graph definition
