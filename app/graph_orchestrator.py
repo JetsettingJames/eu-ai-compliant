@@ -7,6 +7,7 @@ from .graph_nodes import (
     download_and_unzip_repo_node, # This node handles both download and unzip
     discover_files_node,
     process_discovered_files_node,
+    search_compliance_terms_node, # Added new node
     analyze_python_code_node,
     analyze_code_complexity_node, # Changed from calculate_code_analysis_score_node
     summarize_documentation_node, # Import the new node
@@ -39,6 +40,7 @@ def get_graph_orchestrator() -> StateGraph:
     graph.add_node("download_repo", download_and_unzip_repo_node) # This node handles both
     graph.add_node("discover_files", discover_files_node)
     graph.add_node("process_discovered_files", process_discovered_files_node)
+    graph.add_node("search_compliance_terms", search_compliance_terms_node) # Added new node
     graph.add_node("analyze_python_code", analyze_python_code_node)
     graph.add_node("analyze_code_complexity", analyze_code_complexity_node) # Changed node name and function
     graph.add_node("summarize_documentation", summarize_documentation_node) # Add the new node
@@ -54,7 +56,8 @@ def get_graph_orchestrator() -> StateGraph:
     graph.add_edge("initial_setup", "download_repo")
     graph.add_edge("download_repo", "discover_files") # Corrected edge
     graph.add_edge("discover_files", "process_discovered_files")
-    graph.add_edge("process_discovered_files", "analyze_python_code")
+    graph.add_edge("process_discovered_files", "search_compliance_terms") # New edge
+    graph.add_edge("search_compliance_terms", "analyze_python_code") # New edge, from search to analyze
     graph.add_edge("analyze_python_code", "analyze_code_complexity") # Changed target node
     graph.add_edge("analyze_code_complexity", "summarize_documentation") # Changed source node
     graph.add_edge("summarize_documentation", "classify_risk_tier") # New edge

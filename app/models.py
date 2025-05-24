@@ -278,6 +278,7 @@ class ScanGraphState(BaseModel):
     repo_local_path: Optional[str] = None # Actual path to the cloned repository content
     _temp_dir_object: Optional[tempfile.TemporaryDirectory] = None # To manage temp dir lifecycle
     
+    compliance_criteria: Optional[List[Dict[str, Any]]] = None # Added: Loaded compliance criteria
     discovered_files: Dict[str, List[str]] = Field(default_factory=dict) # e.g., {"markdown": [], "python": []}
     processed_docs_content: Dict[str, Any] = Field(default_factory=dict) # Added to store generic processed content
     file_content_cache: Dict[str, str] = Field(default_factory=dict) # path -> content
